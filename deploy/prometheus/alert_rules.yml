@@ -1,0 +1,202 @@
+groups:
+  - name: admingriffe_audit_alerts
+    rules:
+      # High sync lag alert
+      - alert: HighSyncLag
+        expr: sync_lag_ms > 500
+        for: 1m
+        labels:
+          severity: warning
+          service: sync
+        annotations:
+          summary: "High synchronization lag detected"
+          description: "Sync lag is {{ $value }}ms, which is above the 500ms threshold for {{ $labels.instance }}"
+
+      # Critical sync lag alert
+      - alert: CriticalSyncLag
+        expr: sync_lag_ms > 2000
+        for: 30s
+        labels:
+          severity: critical
+          service: sync
+        annotations:
+          summary: "Critical synchronization lag detected"
+          description: "Sync lag is {{ $value }}ms, which is critically high for {{ $labels.instance }}"
+
+      # High error rate alert
+      - alert: HighErrorRate
+        expr: rate(audit_errors_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: audit
+        annotations:
+          summary: "High error rate in audit system"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      # Critical error rate alert
+      - alert: CriticalErrorRate
+        expr: rate(audit_errors_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: audit
+        annotations:
+          summary: "Critical error rate in audit system"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      # Queue depth alert
+      - alert: HighQueueDepth
+        expr: sync_queue_depth > 1000
+        for: 2m
+        labels:
+          severity: warning
+          service: sync
+        annotations:
+          summary: "High queue depth detected"
+          description: "Sync queue depth is {{ $value }}, indicating potential processing delays"
+
+      # Critical queue depth alert
+      - alert: CriticalQueueDepth
+        expr: sync_queue_depth > 5000
+        for: 1m
+        labels:
+          severity: critical
+          service: sync
+        annotations:
+          summary: "Critical queue depth detected"
+          description: "Sync queue depth is {{ $value }}, indicating severe processing delays"
+
+      # Conflict rate alert
+      - alert: HighConflictRate
+        expr: rate(sync_conflicts_total[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: sync
+        annotations:
+          summary: "High conflict rate detected"
+          description: "Sync conflict rate is {{ $value | humanizePercentage }} over the last 10 minutes"
+
+      # Database connection alert
+      - alert: DatabaseConnectionDown
+        expr: up{job="postgres"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: database
+        annotations:
+          summary: "PostgreSQL database is down"
+          description: "PostgreSQL database connection is down for {{ $labels.instance }}"
+
+      # Redis connection alert
+      - alert: RedisConnectionDown
+        expr: up{job="redis"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: cache
+        annotations:
+          summary: "Redis cache is down"
+          description: "Redis cache connection is down for {{ $labels.instance }}"
+
+      # Kafka connection alert
+      - alert: KafkaConnectionDown
+        expr: up{job="kafka"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: streaming
+        annotations:
+          summary: "Kafka is down"
+          description: "Kafka connection is down for {{ $labels.instance }}"
+
+      # API response time alert
+      - alert: HighAPIResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 2m
+        labels:
+          severity: warning
+          service: api
+        annotations:
+          summary: "High API response time"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.instance }}"
+
+      # Memory usage alert
+      - alert: HighMemoryUsage
+        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+      # Disk usage alert
+      - alert: HighDiskUsage
+        expr: (node_filesystem_size_bytes - node_filesystem_avail_bytes) / node_filesystem_size_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High disk usage"
+          description: "Disk usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+
+      # Audit integrity alert
+      - alert: AuditIntegrityFailure
+        expr: audit_integrity_check_failures_total > 0
+        for: 0s
+        labels:
+          severity: critical
+          service: audit
+        annotations:
+          summary: "Audit integrity check failed"
+          description: "{{ $value }} audit integrity check failures detected"
+
+      # CDC lag alert
+      - alert: CDCLagHigh
+        expr: cdc_lag_seconds > 60
+        for: 2m
+        labels:
+          severity: warning
+          service: cdc
+        annotations:
+          summary: "CDC lag is high"
+          description: "Change Data Capture lag is {{ $value }}s for {{ $labels.source_db }}"
+
+      # Throughput drop alert
+      - alert: ThroughputDrop
+        expr: rate(audit_write_tps[5m]) < 100
+        for: 3m
+        labels:
+          severity: warning
+          service: audit
+        annotations:
+          summary: "Audit write throughput dropped"
+          description: "Audit write TPS is {{ $value }}, below expected threshold"
+
+  - name: admingriffe_business_alerts
+    rules:
+      # Failed transactions alert
+      - alert: HighFailedTransactions
+        expr: rate(failed_transactions_total[5m]) > 0.02
+        for: 3m
+        labels:
+          severity: warning
+          service: business
+        annotations:
+          summary: "High failed transaction rate"
+          description: "Failed transaction rate is {{ $value | humanizePercentage }}"
+
+      # Compliance violation alert
+      - alert: ComplianceViolation
+        expr: compliance_violations_total > 0
+        for: 0s
+        labels:
+          severity: critical
+          service: compliance
+        annotations:
+          summary: "Compliance violation detected"
+          description: "{{ $value }} compliance violations detected in the last period"
