@@ -8,7 +8,15 @@
     "start": "next start",
     "lint": "next lint",
     "test": "vitest",
-    "test:coverage": "vitest --coverage"
+    "test:coverage": "vitest --coverage",
+    "db:migrate": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:reset": "prisma migrate reset --force",
+    "db:studio": "prisma studio"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@admin-griffe/ui": "workspace:*",
@@ -48,6 +56,7 @@
     "eslint-config-next": "15.4.5",
     "jsdom": "^26.1.0",
     "tailwindcss": "^4",
+    "tsx": "^4.7.0",
     "typescript": "^5",
     "vitest": "^3.2.4"
   }
