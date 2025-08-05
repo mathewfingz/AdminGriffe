@@ -123,9 +123,9 @@ BEGIN
     IF pk_columns IS NOT NULL THEN
         FOR col_name IN SELECT unnest(pk_columns) LOOP
             IF TG_OP = 'DELETE' THEN
-                pk_values := pk_values || jsonb_build_object(col_name, to_jsonb(OLD.*->>col_name));
+                pk_values := pk_values || jsonb_build_object(col_name, (to_jsonb(OLD)->>col_name));
             ELSE
-                pk_values := pk_values || jsonb_build_object(col_name, to_jsonb(NEW.*->>col_name));
+                pk_values := pk_values || jsonb_build_object(col_name, (to_jsonb(NEW)->>col_name));
             END IF;
         END LOOP;
     END IF;

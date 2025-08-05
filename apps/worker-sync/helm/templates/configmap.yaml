@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-config
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+data:
+  # Application Configuration
+  APP_NAME: "worker-sync"
+  APP_VERSION: {{ .Chart.AppVersion | quote }}
+  
+  # Database Pool Settings
+  POSTGRES_POOL_SIZE: {{ .Values.postgresql.poolSize | quote }}
+  POSTGRES_CONNECTION_TIMEOUT: {{ .Values.postgresql.connectionTimeout | quote }}
+  POSTGRES_IDLE_TIMEOUT: {{ .Values.postgresql.idleTimeout | quote }}
+  
+  MYSQL_POOL_SIZE: {{ .Values.mysql.poolSize | quote }}
+  MYSQL_CONNECTION_TIMEOUT: {{ .Values.mysql.connectionTimeout | quote }}
+  MYSQL_ACQUIRE_TIMEOUT: {{ .Values.mysql.acquireTimeout | quote }}
+  
+  MONGODB_POOL_SIZE: {{ .Values.mongodb.poolSize | quote }}
+  MONGODB_SERVER_SELECTION_TIMEOUT: {{ .Values.mongodb.serverSelectionTimeout | quote }}
+  
+  # Redis Configuration
+  REDIS_KEY_PREFIX: {{ .Values.redis.keyPrefix | quote }}
+  REDIS_MAX_RETRIES_PER_REQUEST: {{ .Values.redis.maxRetriesPerRequest | quote }}
+  REDIS_RETRY_DELAY_ON_FAILOVER: {{ .Values.redis.retryDelayOnFailover | quote }}
+  REDIS_ENABLE_READY_CHECK: {{ .Values.redis.enableReadyCheck | quote }}
+  
+  # Kafka Configuration
+  KAFKA_SESSION_TIMEOUT: {{ .Values.kafka.sessionTimeout | quote }}
+  KAFKA_HEARTBEAT_INTERVAL: {{ .Values.kafka.heartbeatInterval | quote }}
+  KAFKA_MAX_WAIT_TIME: {{ .Values.kafka.maxWaitTime | quote }}
+  KAFKA_TOPIC_POSTGRESQL: {{ .Values.kafka.topics.postgresql | quote }}
+  KAFKA_TOPIC_MYSQL: {{ .Values.kafka.topics.mysql | quote }}
+  KAFKA_TOPIC_MONGODB: {{ .Values.kafka.topics.mongodb | quote }}
+  
+  # RabbitMQ Configuration
+  RABBITMQ_HEARTBEAT: {{ .Values.rabbitmq.heartbeat | quote }}
+  RABBITMQ_CONNECTION_TIMEOUT: {{ .Values.rabbitmq.connectionTimeout | quote }}
+  
+  # Queue Configuration
+  QUEUE_SYNC_CONCURRENCY: {{ .Values.queues.sync.concurrency | quote }}
+  QUEUE_SYNC_ATTEMPTS: {{ .Values.queues.sync.attempts | quote }}
+  QUEUE_SYNC_BACKOFF_TYPE: {{ .Values.queues.sync.backoffType | quote }}
+  QUEUE_SYNC_BACKOFF_DELAY: {{ .Values.queues.sync.backoffDelay | quote }}
+  QUEUE_SYNC_REMOVE_ON_COMPLETE: {{ .Values.queues.sync.removeOnComplete | quote }}
+  QUEUE_SYNC_REMOVE_ON_FAIL: {{ .Values.queues.sync.removeOnFail | quote }}
+  
+  QUEUE_CONFLICT_CONCURRENCY: {{ .Values.queues.conflict.concurrency | quote }}
+  QUEUE_CONFLICT_ATTEMPTS: {{ .Values.queues.conflict.attempts | quote }}
+  QUEUE_CONFLICT_BACKOFF_TYPE: {{ .Values.queues.conflict.backoffType | quote }}
+  QUEUE_CONFLICT_BACKOFF_DELAY: {{ .Values.queues.conflict.backoffDelay | quote }}
+  QUEUE_CONFLICT_REMOVE_ON_COMPLETE: {{ .Values.queues.conflict.removeOnComplete | quote }}
+  QUEUE_CONFLICT_REMOVE_ON_FAIL: {{ .Values.queues.conflict.removeOnFail | quote }}
+  
+  # Synchronization Settings
+  SYNC_BATCH_SIZE: {{ .Values.sync.batchSize | quote }}
+  SYNC_MAX_RETRIES: {{ .Values.sync.maxRetries | quote }}
+  SYNC_RETRY_DELAY: {{ .Values.sync.retryDelay | quote }}
+  SYNC_CONFLICT_RESOLUTION: {{ .Values.sync.conflictResolution | quote }}
+  SYNC_ENABLE_BIDIRECTIONAL: {{ .Values.sync.enableBidirectional | quote }}
+  SYNC_ENABLE_REALTIME: {{ .Values.sync.enableRealtime | quote }}
+  
+  # CDC Settings
+  CDC_POSTGRESQL_ENABLED: {{ .Values.cdc.postgresql.enabled | quote }}
+  CDC_POSTGRESQL_SLOT_NAME: {{ .Values.cdc.postgresql.slotName | quote }}
+  CDC_POSTGRESQL_PUBLICATION_NAME: {{ .Values.cdc.postgresql.publicationName | quote }}
+  
+  CDC_MYSQL_ENABLED: {{ .Values.cdc.mysql.enabled | quote }}
+  CDC_MYSQL_SERVER_ID: {{ .Values.cdc.mysql.serverId | quote }}
+  CDC_MYSQL_BINLOG_FORMAT: {{ .Values.cdc.mysql.binlogFormat | quote }}
+  
+  CDC_MONGODB_ENABLED: {{ .Values.cdc.mongodb.enabled | quote }}
+  CDC_MONGODB_CHANGE_STREAM_FULL_DOCUMENT: {{ .Values.cdc.mongodb.changeStreamOptions.fullDocument | quote }}
+  
+  # Conflict Resolution
+  CONFLICT_STRATEGY: {{ .Values.conflicts.strategy | quote }}
+  CONFLICT_PRIORITY_POSTGRESQL: {{ .Values.conflicts.priorities.postgresql | quote }}
+  CONFLICT_PRIORITY_MYSQL: {{ .Values.conflicts.priorities.mysql | quote }}
+  CONFLICT_PRIORITY_MONGODB: {{ .Values.conflicts.priorities.mongodb | quote }}
+  CONFLICT_AUTO_RESOLVE: {{ .Values.conflicts.autoResolve | quote }}
+  CONFLICT_AUTO_RESOLVE_THRESHOLD: {{ .Values.conflicts.autoResolveThreshold | quote }}
+  
+  # Security Settings
+  SECURITY_ENCRYPTION_ENABLED: {{ .Values.security.encryption.enabled | quote }}
+  SECURITY_ENCRYPTION_ALGORITHM: {{ .Values.security.encryption.algorithm | quote }}
+  SECURITY_JWT_ALGORITHM: {{ .Values.security.jwt.algorithm | quote }}
+  SECURITY_JWT_EXPIRES_IN: {{ .Values.security.jwt.expiresIn | quote }}
+  SECURITY_JWT_REFRESH_EXPIRES_IN: {{ .Values.security.jwt.refreshExpiresIn | quote }}
+  SECURITY_RATE_LIMIT_WINDOW_MS: {{ .Values.security.rateLimit.windowMs | quote }}
+  SECURITY_RATE_LIMIT_MAX: {{ .Values.security.rateLimit.max | quote }}
+  
+  # Monitoring Settings
+  MONITORING_ENABLED: {{ .Values.monitoring.enabled | quote }}
+  MONITORING_PROMETHEUS_ENABLED: {{ .Values.monitoring.prometheus.enabled | quote }}
+  MONITORING_PROMETHEUS_PATH: {{ .Values.monitoring.prometheus.path | quote }}
+  MONITORING_HEALTH_CHECK_ENABLED: {{ .Values.monitoring.healthCheck.enabled | quote }}
+  MONITORING_HEALTH_CHECK_PATH: {{ .Values.monitoring.healthCheck.path | quote }}
+  MONITORING_LOGGING_LEVEL: {{ .Values.monitoring.logging.level | quote }}
+  MONITORING_LOGGING_FORMAT: {{ .Values.monitoring.logging.format | quote }}
+  MONITORING_LOGGING_ENABLE_CONSOLE: {{ .Values.monitoring.logging.enableConsole | quote }}
+  MONITORING_LOGGING_ENABLE_FILE: {{ .Values.monitoring.logging.enableFile | quote }}
+  
+  # Circuit Breaker Settings
+  CIRCUIT_BREAKER_ENABLED: {{ .Values.circuitBreaker.enabled | quote }}
+  CIRCUIT_BREAKER_THRESHOLD: {{ .Values.circuitBreaker.threshold | quote }}
+  CIRCUIT_BREAKER_TIMEOUT: {{ .Values.circuitBreaker.timeout | quote }}
+  CIRCUIT_BREAKER_RESET_TIMEOUT: {{ .Values.circuitBreaker.resetTimeout | quote }}
+  
+  # Performance Settings
+  PERFORMANCE_MAX_CONCURRENT_SYNCS: {{ .Values.performance.maxConcurrentSyncs | quote }}
+  PERFORMANCE_SYNC_TIMEOUT: {{ .Values.performance.syncTimeout | quote }}
+  PERFORMANCE_BATCH_PROCESSING_DELAY: {{ .Values.performance.batchProcessingDelay | quote }}
+  PERFORMANCE_MEMORY_THRESHOLD: {{ .Values.performance.memoryThreshold | quote }}
+  PERFORMANCE_CPU_THRESHOLD: {{ .Values.performance.cpuThreshold | quote }}
+  
+  # Development Settings
+  {{- if .Values.development.enabled }}
+  DEVELOPMENT_ENABLED: {{ .Values.development.enabled | quote }}
+  DEVELOPMENT_DEBUG: {{ .Values.development.debug | quote }}
+  DEVELOPMENT_HOT_RELOAD: {{ .Values.development.hotReload | quote }}
+  DEVELOPMENT_MOCK_SERVICES: {{ .Values.development.mockServices | quote }}
+  {{- end }}

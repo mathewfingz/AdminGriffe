@@ -1,0 +1,166 @@
+1. Get the application URL by running these commands:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  {{- range .paths }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}{{ .path }}
+  {{- end }}
+{{- end }}
+{{- else if contains "NodePort" .Values.apiGateway.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "audit-system.fullname" . }}-api-gateway)
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else if contains "LoadBalancer" .Values.apiGateway.service.type }}
+     NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+           You can watch the status of by running 'kubectl get --namespace {{ .Release.Namespace }} svc -w {{ include "audit-system.fullname" . }}-api-gateway'
+  export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ include "audit-system.fullname" . }}-api-gateway --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+  echo http://$SERVICE_IP:{{ .Values.apiGateway.service.port }}
+{{- else if contains "ClusterIP" .Values.apiGateway.service.type }}
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ include "audit-system.name" . }},app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=api-gateway" -o jsonpath="{.items[0].metadata.name}")
+  export CONTAINER_PORT=$(kubectl get pod --namespace {{ .Release.Namespace }} $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
+  echo "Visit http://127.0.0.1:8080 to use your application"
+  kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:$CONTAINER_PORT
+{{- end }}
+
+2. API Documentation:
+   - Swagger UI: http://{{ .Values.ingress.hosts[0].host }}/api/docs
+   - OpenAPI Spec: http://{{ .Values.ingress.hosts[0].host }}/api/docs-json
+
+3. Monitoring Dashboards:
+{{- if .Values.monitoring.grafana.enabled }}
+   - Grafana: http://{{ .Values.ingress.hosts[0].host }}/grafana
+     Username: admin
+     Password: kubectl get secret --namespace {{ .Release.Namespace }} {{ include "audit-system.fullname" . }}-grafana -o jsonpath="{.data.admin-password}" | base64 --decode
+{{- end }}
+{{- if .Values.monitoring.prometheus.enabled }}
+   - Prometheus: http://{{ .Values.ingress.hosts[0].host }}/prometheus
+{{- end }}
+
+4. Database Connections:
+{{- if .Values.postgresql.enabled }}
+   PostgreSQL:
+   - Host: {{ include "audit-system.fullname" . }}-postgresql
+   - Port: 5432
+   - Database: {{ .Values.postgresql.auth.database }}
+   - Username: {{ .Values.postgresql.auth.username }}
+   - Password: kubectl get secret --namespace {{ .Release.Namespace }} {{ include "audit-system.fullname" . }}-postgresql -o jsonpath="{.data.postgres-password}" | base64 --decode
+{{- end }}
+{{- if .Values.mysql.enabled }}
+   MySQL:
+   - Host: {{ include "audit-system.fullname" . }}-mysql
+   - Port: 3306
+   - Database: {{ .Values.mysql.auth.database }}
+   - Username: {{ .Values.mysql.auth.username }}
+   - Password: kubectl get secret --namespace {{ .Release.Namespace }} {{ include "audit-system.fullname" . }}-mysql -o jsonpath="{.data.mysql-password}" | base64 --decode
+{{- end }}
+{{- if .Values.mongodb.enabled }}
+   MongoDB:
+   - Host: {{ include "audit-system.fullname" . }}-mongodb
+   - Port: 27017
+   - Database: {{ .Values.mongodb.auth.database }}
+   - Username: {{ .Values.mongodb.auth.username }}
+   - Password: kubectl get secret --namespace {{ .Release.Namespace }} {{ include "audit-system.fullname" . }}-mongodb -o jsonpath="{.data.mongodb-password}" | base64 --decode
+{{- end }}
+
+5. Message Queue:
+{{- if .Values.kafka.enabled }}
+   Kafka:
+   - Brokers: {{ include "audit-system.kafka.brokers" . }}
+   - Topics: audit-events, sync-events, conflict-events, dead-letter-queue
+{{- end }}
+
+6. Cache:
+{{- if .Values.redis.enabled }}
+   Redis:
+   - Host: {{ include "audit-system.fullname" . }}-redis-master
+   - Port: 6379
+   - Password: kubectl get secret --namespace {{ .Release.Namespace }} {{ include "audit-system.fullname" . }}-redis -o jsonpath="{.data.redis-password}" | base64 --decode
+{{- end }}
+
+7. Health Checks:
+   - API Health: http://{{ .Values.ingress.hosts[0].host }}/health
+   - Metrics: http://{{ .Values.ingress.hosts[0].host }}/metrics
+   - Ready: http://{{ .Values.ingress.hosts[0].host }}/ready
+
+8. Useful Commands:
+   
+   # Check pod status
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }}
+   
+   # View logs
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=api-gateway -f
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=sync-worker -f
+   
+   # Check HPA status
+   kubectl get hpa -n {{ .Release.Namespace }}
+   
+   # View custom metrics
+   kubectl get --raw "/apis/custom.metrics.k8s.io/v1beta1/namespaces/{{ .Release.Namespace }}/pods/*/sync_lag_ms"
+   
+   # Scale manually
+   kubectl scale deployment {{ include "audit-system.fullname" . }}-api-gateway --replicas=5 -n {{ .Release.Namespace }}
+   kubectl scale deployment {{ include "audit-system.fullname" . }}-sync-worker --replicas=3 -n {{ .Release.Namespace }}
+   
+   # Check network policies
+   kubectl get networkpolicy -n {{ .Release.Namespace }}
+   
+   # View service monitors
+   kubectl get servicemonitor -n {{ .Release.Namespace }}
+
+9. Troubleshooting:
+   
+   # Check init job status
+   kubectl get jobs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=init
+   kubectl logs -n {{ .Release.Namespace }} job/{{ include "audit-system.fullname" . }}-init
+   
+   # Check database connectivity
+   kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "audit-system.fullname" . }}-api-gateway -- npm run db:check
+   
+   # Test Kafka connectivity
+   kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "audit-system.fullname" . }}-sync-worker -- npm run kafka:test
+   
+   # View circuit breaker status
+   kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "audit-system.fullname" . }}-api-gateway -- curl localhost:3000/circuit-breaker/status
+   
+   # Check sync lag
+   kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "audit-system.fullname" . }}-sync-worker -- curl localhost:3001/sync/lag
+
+10. Performance Testing:
+    
+    # Run load test
+    kubectl run k6-load-test --image=grafana/k6:latest --rm -it --restart=Never -- run - <tests/load/load_test.js
+    
+    # Monitor during load test
+    kubectl top pods -n {{ .Release.Namespace }}
+    kubectl get hpa -n {{ .Release.Namespace }} -w
+
+11. Security:
+    
+    # Check RBAC
+    kubectl auth can-i --list --as=system:serviceaccount:{{ .Release.Namespace }}:{{ include "audit-system.serviceAccountName" . }}
+    
+    # View secrets
+    kubectl get secrets -n {{ .Release.Namespace }}
+    
+    # Check network policies
+    kubectl describe networkpolicy -n {{ .Release.Namespace }}
+
+12. Backup & Recovery:
+    
+    # Create database backup
+    kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "audit-system.fullname" . }}-api-gateway -- npm run backup:create
+    
+    # List backups
+    kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "audit-system.fullname" . }}-api-gateway -- npm run backup:list
+    
+    # Restore from backup
+    kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "audit-system.fullname" . }}-api-gateway -- npm run backup:restore <backup-id>
+
+13. Compliance:
+    
+    # Generate audit report
+    kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "audit-system.fullname" . }}-api-gateway -- npm run compliance:report
+    
+    # Export audit data
+    kubectl exec -it -n {{ .Release.Namespace }} deployment/{{ include "audit-system.fullname" . }}-api-gateway -- npm run compliance:export --format=json --start-date=2024-01-01 --end-date=2024-12-31
+
+For more information, visit: https://github.com/your-org/audit-system/docs

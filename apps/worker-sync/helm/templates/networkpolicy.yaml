@@ -1,0 +1,74 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: {{ include "worker-sync.networkPolicy.apiVersion" . }}
+kind: NetworkPolicy
+metadata:
+  name: {{ include "worker-sync.fullname" . }}
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "worker-sync.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    {{- if .Values.networkPolicy.ingress.enabled }}
+    - Ingress
+    {{- end }}
+    {{- if .Values.networkPolicy.egress.enabled }}
+    - Egress
+    {{- end }}
+  {{- if .Values.networkPolicy.ingress.enabled }}
+  ingress:
+    - from:
+        {{- with .Values.networkPolicy.ingress.from }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+        - protocol: TCP
+          port: {{ .Values.service.metricsPort }}
+  {{- end }}
+  {{- if .Values.networkPolicy.egress.enabled }}
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow HTTPS traffic
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 80
+    # Allow database connections
+    - to:
+        {{- with .Values.networkPolicy.egress.to }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        # PostgreSQL
+        - protocol: TCP
+          port: 5432
+        # MySQL
+        - protocol: TCP
+          port: 3306
+        # MongoDB
+        - protocol: TCP
+          port: 27017
+        # Redis
+        - protocol: TCP
+          port: 6379
+        # Kafka
+        - protocol: TCP
+          port: 9092
+        # RabbitMQ
+        - protocol: TCP
+          port: 5672
+        - protocol: TCP
+          port: 15672
+  {{- end }}
+{{- end }}

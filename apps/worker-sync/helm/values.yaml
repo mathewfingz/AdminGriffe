@@ -1,0 +1,356 @@
+# Default values for worker-sync
+replicaCount: 3
+
+image:
+  repository: ghcr.io/admingriffe/worker-sync
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3003"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  fsGroup: 2000
+  runAsNonRoot: true
+  runAsUser: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+service:
+  type: ClusterIP
+  port: 3001
+  metricsPort: 3003
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: worker-sync.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: 70
+  customMetrics:
+    - type: Pods
+      pods:
+        metric:
+          name: sync_lag_ms
+        target:
+          type: AverageValue
+          averageValue: "100"
+    - type: Pods
+      pods:
+        metric:
+          name: queue_depth
+        target:
+          type: AverageValue
+          averageValue: "500"
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - worker-sync
+        topologyKey: kubernetes.io/hostname
+
+# Environment variables
+env:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  METRICS_PORT: "3003"
+  HEALTH_CHECK_PORT: "3001"
+
+# Database configurations
+postgresql:
+  enabled: true
+  host: postgresql
+  port: 5432
+  database: sync_db
+  username: sync_user
+  ssl: true
+  poolSize: 20
+  connectionTimeout: 30000
+  idleTimeout: 10000
+
+mysql:
+  enabled: true
+  host: mysql
+  port: 3306
+  database: sync_db
+  username: sync_user
+  ssl: true
+  poolSize: 20
+  connectionTimeout: 30000
+  acquireTimeout: 60000
+
+mongodb:
+  enabled: true
+  host: mongodb
+  port: 27017
+  database: sync_db
+  username: sync_user
+  ssl: true
+  poolSize: 20
+  serverSelectionTimeout: 30000
+
+# Redis configuration
+redis:
+  enabled: true
+  host: redis
+  port: 6379
+  database: 0
+  keyPrefix: "worker-sync:"
+  maxRetriesPerRequest: 3
+  retryDelayOnFailover: 100
+  enableReadyCheck: true
+  maxRetriesPerRequest: 3
+
+# Kafka configuration
+kafka:
+  enabled: true
+  brokers:
+    - kafka:9092
+  clientId: worker-sync
+  groupId: worker-sync-group
+  sessionTimeout: 30000
+  heartbeatInterval: 3000
+  maxWaitTime: 5000
+  topics:
+    postgresql: dbz.public
+    mysql: dbz.sync_db
+    mongodb: dbz.sync_db
+
+# RabbitMQ configuration
+rabbitmq:
+  enabled: true
+  host: rabbitmq
+  port: 5672
+  username: sync_user
+  vhost: /
+  heartbeat: 60
+  connectionTimeout: 30000
+
+# Queue configuration
+queues:
+  sync:
+    concurrency: 10
+    attempts: 5
+    backoffType: exponential
+    backoffDelay: 500
+    removeOnComplete: 100
+    removeOnFail: 50
+  conflict:
+    concurrency: 5
+    attempts: 3
+    backoffType: exponential
+    backoffDelay: 1000
+    removeOnComplete: 50
+    removeOnFail: 100
+
+# Synchronization settings
+sync:
+  batchSize: 100
+  maxRetries: 5
+  retryDelay: 1000
+  conflictResolution: priority
+  enableBidirectional: true
+  enableRealtime: true
+
+# CDC settings
+cdc:
+  postgresql:
+    enabled: true
+    slotName: worker_sync_slot
+    publicationName: worker_sync_pub
+  mysql:
+    enabled: true
+    serverId: 1001
+    binlogFormat: ROW
+  mongodb:
+    enabled: true
+    changeStreamOptions:
+      fullDocument: updateLookup
+
+# Conflict resolution
+conflicts:
+  strategy: priority
+  priorities:
+    postgresql: 1
+    mysql: 2
+    mongodb: 3
+  autoResolve: true
+  autoResolveThreshold: 0.95
+
+# Security settings
+security:
+  encryption:
+    enabled: true
+    algorithm: aes-256-gcm
+  jwt:
+    algorithm: RS256
+    expiresIn: 1h
+    refreshExpiresIn: 7d
+  rateLimit:
+    windowMs: 900000
+    max: 1000
+
+# Monitoring and observability
+monitoring:
+  enabled: true
+  prometheus:
+    enabled: true
+    port: 3003
+    path: /metrics
+  healthCheck:
+    enabled: true
+    port: 3001
+    path: /health
+  logging:
+    level: info
+    format: json
+    enableConsole: true
+    enableFile: false
+
+# Circuit breaker settings
+circuitBreaker:
+  enabled: true
+  threshold: 5
+  timeout: 60000
+  resetTimeout: 30000
+
+# Performance settings
+performance:
+  maxConcurrentSyncs: 100
+  syncTimeout: 30000
+  batchProcessingDelay: 100
+  memoryThreshold: 0.8
+  cpuThreshold: 0.8
+
+# Secrets (to be overridden in production)
+secrets:
+  postgresql:
+    password: ""
+  mysql:
+    password: ""
+  mongodb:
+    password: ""
+  redis:
+    password: ""
+  rabbitmq:
+    password: ""
+  jwt:
+    privateKey: ""
+    publicKey: ""
+  encryption:
+    key: ""
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Network Policy
+networkPolicy:
+  enabled: true
+  ingress:
+    enabled: true
+    from:
+      - namespaceSelector:
+          matchLabels:
+            name: monitoring
+      - namespaceSelector:
+          matchLabels:
+            name: ingress-nginx
+      - podSelector:
+          matchLabels:
+            app.kubernetes.io/name: worker-sync
+  egress:
+    enabled: true
+    to:
+      - namespaceSelector:
+          matchLabels:
+            name: database
+      - namespaceSelector:
+          matchLabels:
+            name: cache
+      - namespaceSelector:
+          matchLabels:
+            name: messaging
+
+# Service Monitor for Prometheus
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}
+  annotations: {}
+
+# Grafana Dashboard
+grafanaDashboard:
+  enabled: true
+  labels:
+    grafana_dashboard: "1"
+  annotations: {}
+
+# Backup and restore
+backup:
+  enabled: false
+  schedule: "0 2 * * *"
+  retention: 30
+  storage:
+    type: s3
+    bucket: ""
+    region: ""
+    accessKey: ""
+    secretKey: ""
+
+# Development settings (override in dev values)
+development:
+  enabled: false
+  debug: false
+  hotReload: false
+  mockServices: false

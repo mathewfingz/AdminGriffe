@@ -1,0 +1,285 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "worker-sync.fullname" . }}
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      {{- include "worker-sync.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "worker-sync.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: wait-for-dependencies
+          image: busybox:1.35
+          command: ['sh', '-c']
+          args:
+            - |
+              echo "Waiting for dependencies..."
+              {{- if .Values.postgresql.enabled }}
+              until nc -z {{ .Values.postgresql.host }} {{ .Values.postgresql.port }}; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              {{- end }}
+              {{- if .Values.mysql.enabled }}
+              until nc -z {{ .Values.mysql.host }} {{ .Values.mysql.port }}; do
+                echo "Waiting for MySQL..."
+                sleep 2
+              done
+              {{- end }}
+              {{- if .Values.mongodb.enabled }}
+              until nc -z {{ .Values.mongodb.host }} {{ .Values.mongodb.port }}; do
+                echo "Waiting for MongoDB..."
+                sleep 2
+              done
+              {{- end }}
+              {{- if .Values.redis.enabled }}
+              until nc -z {{ .Values.redis.host }} {{ .Values.redis.port }}; do
+                echo "Waiting for Redis..."
+                sleep 2
+              done
+              {{- end }}
+              {{- if .Values.kafka.enabled }}
+              {{- range .Values.kafka.brokers }}
+              until nc -z {{ . | replace ":9092" "" }} 9092; do
+                echo "Waiting for Kafka..."
+                sleep 2
+              done
+              {{- end }}
+              {{- end }}
+              {{- if .Values.rabbitmq.enabled }}
+              until nc -z {{ .Values.rabbitmq.host }} {{ .Values.rabbitmq.port }}; do
+                echo "Waiting for RabbitMQ..."
+                sleep 2
+              done
+              {{- end }}
+              echo "All dependencies are ready!"
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.service.metricsPort }}
+              protocol: TCP
+          env:
+            # Application settings
+            - name: NODE_ENV
+              value: {{ .Values.env.NODE_ENV | quote }}
+            - name: LOG_LEVEL
+              value: {{ .Values.env.LOG_LEVEL | quote }}
+            - name: METRICS_PORT
+              value: {{ .Values.env.METRICS_PORT | quote }}
+            - name: HEALTH_CHECK_PORT
+              value: {{ .Values.env.HEALTH_CHECK_PORT | quote }}
+            
+            # PostgreSQL
+            {{- if .Values.postgresql.enabled }}
+            - name: POSTGRES_HOST
+              value: {{ .Values.postgresql.host | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgresql.port | quote }}
+            - name: POSTGRES_DATABASE
+              value: {{ .Values.postgresql.database | quote }}
+            - name: POSTGRES_USERNAME
+              value: {{ .Values.postgresql.username | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: postgresql-password
+            - name: POSTGRES_SSL
+              value: {{ .Values.postgresql.ssl | quote }}
+            {{- end }}
+            
+            # MySQL
+            {{- if .Values.mysql.enabled }}
+            - name: MYSQL_HOST
+              value: {{ .Values.mysql.host | quote }}
+            - name: MYSQL_PORT
+              value: {{ .Values.mysql.port | quote }}
+            - name: MYSQL_DATABASE
+              value: {{ .Values.mysql.database | quote }}
+            - name: MYSQL_USERNAME
+              value: {{ .Values.mysql.username | quote }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: mysql-password
+            - name: MYSQL_SSL
+              value: {{ .Values.mysql.ssl | quote }}
+            {{- end }}
+            
+            # MongoDB
+            {{- if .Values.mongodb.enabled }}
+            - name: MONGODB_HOST
+              value: {{ .Values.mongodb.host | quote }}
+            - name: MONGODB_PORT
+              value: {{ .Values.mongodb.port | quote }}
+            - name: MONGODB_DATABASE
+              value: {{ .Values.mongodb.database | quote }}
+            - name: MONGODB_USERNAME
+              value: {{ .Values.mongodb.username | quote }}
+            - name: MONGODB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: mongodb-password
+            - name: MONGODB_SSL
+              value: {{ .Values.mongodb.ssl | quote }}
+            {{- end }}
+            
+            # Redis
+            {{- if .Values.redis.enabled }}
+            - name: REDIS_HOST
+              value: {{ .Values.redis.host | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.port | quote }}
+            - name: REDIS_DATABASE
+              value: {{ .Values.redis.database | quote }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: redis-password
+            {{- end }}
+            
+            # Kafka
+            {{- if .Values.kafka.enabled }}
+            - name: KAFKA_BROKERS
+              value: {{ join "," .Values.kafka.brokers | quote }}
+            - name: KAFKA_CLIENT_ID
+              value: {{ .Values.kafka.clientId | quote }}
+            - name: KAFKA_GROUP_ID
+              value: {{ .Values.kafka.groupId | quote }}
+            {{- end }}
+            
+            # RabbitMQ
+            {{- if .Values.rabbitmq.enabled }}
+            - name: RABBITMQ_HOST
+              value: {{ .Values.rabbitmq.host | quote }}
+            - name: RABBITMQ_PORT
+              value: {{ .Values.rabbitmq.port | quote }}
+            - name: RABBITMQ_USERNAME
+              value: {{ .Values.rabbitmq.username | quote }}
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: rabbitmq-password
+            - name: RABBITMQ_VHOST
+              value: {{ .Values.rabbitmq.vhost | quote }}
+            {{- end }}
+            
+            # JWT
+            - name: JWT_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: jwt-private-key
+            - name: JWT_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: jwt-public-key
+            
+            # Encryption
+            - name: ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: encryption-key
+          
+          envFrom:
+            - configMapRef:
+                name: {{ include "worker-sync.fullname" . }}-config
+          
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+            successThreshold: 1
+          
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+            successThreshold: 1
+          
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: var-cache
+              mountPath: /var/cache
+      
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: var-cache
+          emptyDir: {}
+      
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
