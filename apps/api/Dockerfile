@@ -5,7 +5,7 @@ FROM node:20-alpine AS base
 RUN apk update && apk upgrade && apk add --no-cache curl
 
 # Install pnpm
-RUN npm install -g pnpm@8
+RUN npm install -g pnpm@latest
 
 # Set working directory
 WORKDIR /app
@@ -14,16 +14,13 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 
 # Install dependencies
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --force
 
 # Development stage
 FROM base AS development
 
 # Copy source code
 COPY . .
-
-# Generate Prisma client
-RUN pnpm db:generate
 
 # Expose port
 EXPOSE 3001
@@ -50,7 +47,7 @@ FROM node:20-alpine AS production
 RUN apk update && apk upgrade && apk add --no-cache curl
 
 # Install pnpm
-RUN npm install -g pnpm@8
+RUN npm install -g pnpm@latest
 
 # Create app user for security
 RUN addgroup -g 1001 -S nodejs
@@ -63,7 +60,7 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml ./
 
 # Install production dependencies only
-RUN pnpm install --frozen-lockfile --prod
+RUN pnpm install --force --prod
 
 # Copy built application from build stage
 COPY --from=build --chown=nodejs:nodejs /app/dist ./dist

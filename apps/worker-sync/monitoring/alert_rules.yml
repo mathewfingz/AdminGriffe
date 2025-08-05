@@ -1,0 +1,204 @@
+groups:
+  - name: sync_worker_alerts
+    rules:
+      # High sync lag alert
+      - alert: HighSyncLag
+        expr: sync_lag_ms > 500
+        for: 1m
+        labels:
+          severity: warning
+          service: worker-sync
+        annotations:
+          summary: "High synchronization lag detected"
+          description: "Sync lag is {{ $value }}ms, which is above the 500ms threshold for more than 1 minute"
+
+      # Critical sync lag alert
+      - alert: CriticalSyncLag
+        expr: sync_lag_ms > 2000
+        for: 30s
+        labels:
+          severity: critical
+          service: worker-sync
+        annotations:
+          summary: "Critical synchronization lag detected"
+          description: "Sync lag is {{ $value }}ms, which is critically high for more than 30 seconds"
+
+      # High error rate alert
+      - alert: HighErrorRate
+        expr: rate(sync_errors_total[5m]) / rate(sync_events_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+          service: worker-sync
+        annotations:
+          summary: "High error rate in sync operations"
+          description: "Error rate is {{ $value | humanizePercentage }}, which is above 1% for more than 5 minutes"
+
+      # Critical error rate alert
+      - alert: CriticalErrorRate
+        expr: rate(sync_errors_total[5m]) / rate(sync_events_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+          service: worker-sync
+        annotations:
+          summary: "Critical error rate in sync operations"
+          description: "Error rate is {{ $value | humanizePercentage }}, which is critically high for more than 2 minutes"
+
+      # High conflict rate alert
+      - alert: HighConflictRate
+        expr: rate(sync_conflicts_total[10m]) / rate(sync_events_total[10m]) > 0.02
+        for: 10m
+        labels:
+          severity: warning
+          service: worker-sync
+        annotations:
+          summary: "High conflict rate detected"
+          description: "Conflict rate is {{ $value | humanizePercentage }}, which is above 2% for more than 10 minutes"
+
+      # Queue depth alert
+      - alert: HighQueueDepth
+        expr: queue_depth > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: worker-sync
+        annotations:
+          summary: "High queue depth detected"
+          description: "Queue depth is {{ $value }}, which is above 1000 for more than 5 minutes"
+
+      # Critical queue depth alert
+      - alert: CriticalQueueDepth
+        expr: queue_depth > 5000
+        for: 2m
+        labels:
+          severity: critical
+          service: worker-sync
+        annotations:
+          summary: "Critical queue depth detected"
+          description: "Queue depth is {{ $value }}, which is critically high for more than 2 minutes"
+
+      # Service down alert
+      - alert: SyncWorkerDown
+        expr: up{job="worker-sync"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: worker-sync
+        annotations:
+          summary: "Sync Worker service is down"
+          description: "The sync worker service has been down for more than 30 seconds"
+
+      # Low throughput alert
+      - alert: LowThroughput
+        expr: rate(sync_events_total[5m]) < 100
+        for: 10m
+        labels:
+          severity: warning
+          service: worker-sync
+        annotations:
+          summary: "Low sync throughput detected"
+          description: "Sync throughput is {{ $value }} events/sec, which is below 100 for more than 10 minutes"
+
+      # Database connection issues
+      - alert: DatabaseConnectionFailure
+        expr: database_connection_errors_total > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: worker-sync
+        annotations:
+          summary: "Database connection failures detected"
+          description: "{{ $value }} database connection failures detected in the last minute"
+
+      # Memory usage alert
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / 1024 / 1024 > 1024
+        for: 5m
+        labels:
+          severity: warning
+          service: worker-sync
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value }}MB, which is above 1GB for more than 5 minutes"
+
+      # CPU usage alert
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: worker-sync
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value }}%, which is above 80% for more than 5 minutes"
+
+  - name: database_alerts
+    rules:
+      # PostgreSQL connection alert
+      - alert: PostgreSQLDown
+        expr: up{job="postgres"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: postgresql
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "PostgreSQL database has been down for more than 30 seconds"
+
+      # MySQL connection alert
+      - alert: MySQLDown
+        expr: up{job="mysql"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: mysql
+        annotations:
+          summary: "MySQL is down"
+          description: "MySQL database has been down for more than 30 seconds"
+
+      # MongoDB connection alert
+      - alert: MongoDBDown
+        expr: up{job="mongodb"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: mongodb
+        annotations:
+          summary: "MongoDB is down"
+          description: "MongoDB database has been down for more than 30 seconds"
+
+      # Redis connection alert
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: redis
+        annotations:
+          summary: "Redis is down"
+          description: "Redis cache has been down for more than 30 seconds"
+
+  - name: messaging_alerts
+    rules:
+      # Kafka connection alert
+      - alert: KafkaDown
+        expr: up{job="kafka"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: kafka
+        annotations:
+          summary: "Kafka is down"
+          description: "Kafka message broker has been down for more than 30 seconds"
+
+      # RabbitMQ connection alert
+      - alert: RabbitMQDown
+        expr: up{job="rabbitmq"} == 0
+        for: 30s
+        labels:
+          severity: critical
+          service: rabbitmq
+        annotations:
+          summary: "RabbitMQ is down"
+          description: "RabbitMQ message broker has been down for more than 30 seconds"

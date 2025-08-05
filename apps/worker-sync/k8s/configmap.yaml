@@ -1,0 +1,160 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: worker-sync-config
+  namespace: sync-system
+  labels:
+    app: worker-sync
+data:
+  # Application Configuration
+  NODE_ENV: "production"
+  PORT: "3001"
+  HEALTH_PORT: "3003"
+  LOG_LEVEL: "info"
+  
+  # Queue Configuration
+  QUEUE_CONCURRENCY: "5"
+  QUEUE_MAX_JOBS: "1000"
+  QUEUE_REMOVE_ON_COMPLETE: "100"
+  QUEUE_REMOVE_ON_FAIL: "50"
+  
+  # Sync Configuration
+  SYNC_BATCH_SIZE: "100"
+  SYNC_TIMEOUT_MS: "30000"
+  SYNC_RETRY_ATTEMPTS: "3"
+  SYNC_RETRY_DELAY: "1000"
+  SYNC_RETRY_BACKOFF: "exponential"
+  
+  # CDC Configuration
+  CDC_ENABLED: "true"
+  CDC_POLL_INTERVAL: "1000"
+  CDC_BATCH_SIZE: "50"
+  
+  # Kafka Topics
+  KAFKA_POSTGRES_TOPIC: "cdc.postgres"
+  KAFKA_MYSQL_TOPIC: "cdc.mysql"
+  KAFKA_MONGODB_TOPIC: "cdc.mongodb"
+  KAFKA_CONSUMER_GROUP: "sync-worker"
+  KAFKA_AUTO_OFFSET_RESET: "earliest"
+  
+  # Conflict Resolution
+  CONFLICT_RESOLUTION_STRATEGY: "timestamp"
+  CONFLICT_RESOLUTION_TIMEOUT: "30000"
+  CONFLICT_MANUAL_REVIEW_THRESHOLD: "10"
+  
+  # Security
+  SECURITY_ENCRYPTION_ALGORITHM: "aes-256-gcm"
+  SECURITY_HASH_ALGORITHM: "sha256"
+  SECURITY_JWT_ALGORITHM: "RS256"
+  SECURITY_JWT_EXPIRES_IN: "1h"
+  SECURITY_REFRESH_TOKEN_EXPIRES_IN: "7d"
+  
+  # Monitoring
+  MONITORING_ENABLED: "true"
+  MONITORING_METRICS_INTERVAL: "10000"
+  MONITORING_HEALTH_CHECK_INTERVAL: "30000"
+  PROMETHEUS_METRICS_PATH: "/metrics"
+  
+  # Circuit Breaker
+  CIRCUIT_BREAKER_ENABLED: "true"
+  CIRCUIT_BREAKER_FAILURE_THRESHOLD: "5"
+  CIRCUIT_BREAKER_SUCCESS_THRESHOLD: "3"
+  CIRCUIT_BREAKER_TIMEOUT: "60000"
+  CIRCUIT_BREAKER_MONITOR_INTERVAL: "10000"
+  
+  # Rate Limiting
+  RATE_LIMIT_ENABLED: "true"
+  RATE_LIMIT_WINDOW_MS: "60000"
+  RATE_LIMIT_MAX_REQUESTS: "1000"
+  RATE_LIMIT_SKIP_SUCCESSFUL_REQUESTS: "false"
+  RATE_LIMIT_SKIP_FAILED_REQUESTS: "false"
+  
+  # Logging
+  LOG_FORMAT: "json"
+  LOG_TIMESTAMP: "true"
+  LOG_COLORIZE: "false"
+  LOG_MAX_SIZE: "20m"
+  LOG_MAX_FILES: "14d"
+  LOG_DATE_PATTERN: "YYYY-MM-DD"
+  
+  # Development
+  DEV_MODE: "false"
+  DEBUG_ENABLED: "false"
+  PROFILING_ENABLED: "false"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-config
+  namespace: sync-system
+  labels:
+    app: worker-sync
+    component: kafka
+data:
+  brokers: "kafka-cluster-kafka-bootstrap.kafka:9092"
+  client-id: "worker-sync"
+  connection-timeout: "3000"
+  request-timeout: "30000"
+  retry-attempts: "5"
+  retry-delay: "300"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: database-config
+  namespace: sync-system
+  labels:
+    app: worker-sync
+    component: database
+data:
+  # PostgreSQL Configuration
+  postgres-host: "postgresql-primary.database"
+  postgres-port: "5432"
+  postgres-database: "audit_db"
+  postgres-ssl: "require"
+  postgres-pool-min: "2"
+  postgres-pool-max: "20"
+  postgres-idle-timeout: "30000"
+  postgres-connection-timeout: "5000"
+  
+  # MySQL Configuration
+  mysql-host: "mysql-primary.database"
+  mysql-port: "3306"
+  mysql-database: "sync_db"
+  mysql-ssl: "true"
+  mysql-pool-min: "2"
+  mysql-pool-max: "20"
+  mysql-idle-timeout: "30000"
+  mysql-connection-timeout: "5000"
+  
+  # MongoDB Configuration
+  mongodb-host: "mongodb-primary.database"
+  mongodb-port: "27017"
+  mongodb-database: "sync_db"
+  mongodb-ssl: "true"
+  mongodb-pool-min: "2"
+  mongodb-pool-max: "20"
+  mongodb-server-selection-timeout: "5000"
+  mongodb-socket-timeout: "30000"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: redis-config
+  namespace: sync-system
+  labels:
+    app: worker-sync
+    component: redis
+data:
+  host: "redis-master.cache"
+  port: "6379"
+  db: "0"
+  key-prefix: "sync:"
+  connect-timeout: "5000"
+  command-timeout: "5000"
+  retry-delay-on-failure: "100"
+  retry-attempts: "3"
+  max-retries-per-request: "3"

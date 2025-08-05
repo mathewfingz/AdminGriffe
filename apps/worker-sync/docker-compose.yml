@@ -1,0 +1,262 @@
+version: '3.8'
+
+services:
+  worker-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: audit-worker-sync
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - HEALTH_PORT=3002
+      
+      # Database URLs
+      - POSTGRES_URL=postgresql://audit_user:audit_password@postgres:5432/audit_db
+      - MYSQL_URL=mysql://audit_user:audit_password@mysql:3306/audit_db
+      - MONGODB_URL=mongodb://audit_user:audit_password@mongodb:27017/audit_db
+      
+      # Message Queues
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://audit_user:audit_password@rabbitmq:5672
+      
+      # Kafka Configuration
+      - KAFKA_BROKERS=kafka:9092
+      - KAFKA_CLIENT_ID=audit-sync-worker
+      - KAFKA_GROUP_ID=audit-sync-group
+      
+      # Sync Configuration
+      - SYNC_BATCH_SIZE=100
+      - SYNC_RETRY_ATTEMPTS=3
+      - SYNC_CONFLICT_STRATEGY=auto
+      - SYNC_CONFLICT_WINDOW_MS=5000
+      
+      # Performance
+      - SYNC_CONCURRENCY=10
+      - SYNC_QUEUE_CONCURRENCY=5
+      
+      # Monitoring
+      - METRICS_ENABLED=true
+      - PROMETHEUS_ENABLED=true
+      
+      # Security
+      - ENCRYPTION_KEY=your-256-bit-encryption-key-here-change-in-production
+      
+      # CDC Configuration
+      - CDC_ENABLED=true
+      - CDC_POSTGRES_SLOT=audit_slot
+      - CDC_MYSQL_SERVER_ID=1001
+      
+      # Source Priorities
+      - SOURCE_PRIORITY_POSTGRES=3
+      - SOURCE_PRIORITY_MYSQL=2
+      - SOURCE_PRIORITY_MONGODB=1
+      
+    ports:
+      - "3002:3002"  # Health check port
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    
+    networks:
+      - audit-network
+    
+    volumes:
+      - worker-logs:/app/logs
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # Supporting services for development/testing
+  postgres:
+    image: postgres:16
+    container_name: audit-postgres-sync
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=audit_db
+      - POSTGRES_USER=audit_user
+      - POSTGRES_PASSWORD=audit_password
+      - POSTGRES_INITDB_ARGS=--auth-host=scram-sha-256
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    networks:
+      - audit-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U audit_user -d audit_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mysql:
+    image: mysql:8.0
+    container_name: audit-mysql-sync
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=audit_db
+      - MYSQL_USER=audit_user
+      - MYSQL_PASSWORD=audit_password
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./scripts/mysql-init.sql:/docker-entrypoint-initdb.d/01-init.sql
+    networks:
+      - audit-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "audit_user", "-p$$MYSQL_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongodb:
+    image: mongo:7
+    container_name: audit-mongodb-sync
+    restart: unless-stopped
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=audit_user
+      - MONGO_INITDB_ROOT_PASSWORD=audit_password
+      - MONGO_INITDB_DATABASE=audit_db
+    ports:
+      - "27018:27017"
+    volumes:
+      - mongodb-data:/data/db
+      - ./scripts/mongo-init.js:/docker-entrypoint-initdb.d/01-init.js
+    networks:
+      - audit-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: audit-redis-sync
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - audit-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: audit-rabbitmq-sync
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_DEFAULT_USER=audit_user
+      - RABBITMQ_DEFAULT_PASS=audit_password
+    ports:
+      - "5673:5672"
+      - "15673:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - audit-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: audit-kafka-sync
+    restart: unless-stopped
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    ports:
+      - "9093:9092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    depends_on:
+      - zookeeper
+    networks:
+      - audit-network
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: audit-zookeeper-sync
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2182:2181"
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - audit-network
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  mysql-data:
+  mongodb-data:
+  redis-data:
+  rabbitmq-data:
+  kafka-data:
+  zookeeper-data:
+  zookeeper-logs:
+  worker-logs:
+
+networks:
+  audit-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
