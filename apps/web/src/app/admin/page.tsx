@@ -1,54 +1,93 @@
+import { KpiCard } from '@/components/admin/kpi-card'
+import { AreaChart30d } from '@/components/admin/area-chart-30d'
+import { TopStoresTable } from '@/components/admin/top-stores-table'
+import { AlertsWidget } from '@/components/admin/alerts-widget'
+import { 
+  DollarSign, 
+  Store, 
+  ShoppingCart, 
+  Users, 
+  Percent 
+} from 'lucide-react'
+
 export default function AdminDashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard de Administración</h1>
-        <p className="text-gray-600">Bienvenido al panel de control de AdminGriffe</p>
+        <h1 className="text-2xl font-bold text-gray-900">
+          Dashboard Global
+        </h1>
+        <p className="text-gray-600 mt-1">
+          Vista general del rendimiento de todas las tiendas
+        </p>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-sm font-medium text-gray-500">Total Tiendas</h3>
-          <p className="text-2xl font-bold text-gray-900">24</p>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-sm font-medium text-gray-500">Usuarios Activos</h3>
-          <p className="text-2xl font-bold text-gray-900">156</p>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-sm font-medium text-gray-500">Ventas del Mes</h3>
-          <p className="text-2xl font-bold text-gray-900">$45,231</p>
-        </div>
-        <div className="bg-white p-6 rounded-lg shadow">
-          <h3 className="text-sm font-medium text-gray-500">Pedidos Pendientes</h3>
-          <p className="text-2xl font-bold text-gray-900">12</p>
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+        <KpiCard
+          title="Ventas Totales"
+          value="$12.4M"
+          change={15.3}
+          changeLabel="vs mes anterior"
+          icon={<DollarSign className="w-6 h-6 text-blue-600" />}
+          delay={0}
+        />
+        <KpiCard
+          title="Tiendas Activas"
+          value="247"
+          change={8.1}
+          changeLabel="nuevas este mes"
+          icon={<Store className="w-6 h-6 text-green-600" />}
+          delay={0.1}
+        />
+        <KpiCard
+          title="Pedidos Globales"
+          value="18,429"
+          change={-2.4}
+          changeLabel="vs mes anterior"
+          icon={<ShoppingCart className="w-6 h-6 text-purple-600" />}
+          delay={0.2}
+        />
+        <KpiCard
+          title="Clientes"
+          value="94,832"
+          change={12.7}
+          changeLabel="activos"
+          icon={<Users className="w-6 h-6 text-orange-600" />}
+          delay={0.3}
+        />
+        <KpiCard
+          title="Comisión Total"
+          value="$890K"
+          change={18.9}
+          changeLabel="este mes"
+          icon={<Percent className="w-6 h-6 text-red-600" />}
+          delay={0.4}
+        />
+      </div>
+
+      {/* Charts and Tables */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="lg:col-span-2">
+          <AreaChart30d 
+            title="Ventas y Pedidos - Últimos 30 días"
+            delay={0.5}
+          />
         </div>
       </div>
 
-      {/* Recent Activity */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="p-6 border-b border-gray-200">
-          <h3 className="text-lg font-medium text-gray-900">Actividad Reciente</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2">
+          <TopStoresTable 
+            title="Top 5 Tiendas por Ventas"
+            delay={0.6}
+          />
         </div>
-        <div className="p-6">
-          <div className="space-y-4">
-            <div className="flex items-center space-x-3">
-              <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-              <p className="text-sm text-gray-600">Nueva tienda registrada: "Boutique Central"</p>
-              <span className="text-xs text-gray-400">hace 2 horas</span>
-            </div>
-            <div className="flex items-center space-x-3">
-              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-              <p className="text-sm text-gray-600">Usuario actualizado: juan@email.com</p>
-              <span className="text-xs text-gray-400">hace 4 horas</span>
-            </div>
-            <div className="flex items-center space-x-3">
-              <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-              <p className="text-sm text-gray-600">Pedido pendiente de aprobación #1234</p>
-              <span className="text-xs text-gray-400">hace 6 horas</span>
-            </div>
-          </div>
+        <div>
+          <AlertsWidget 
+            title="Alertas del Sistema"
+            delay={0.7}
+          />
         </div>
       </div>
     </div>
