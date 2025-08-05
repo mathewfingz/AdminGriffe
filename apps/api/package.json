@@ -79,7 +79,7 @@
     "@types/express-rate-limit": "^6.0.2",
     "@types/jest": "^29.5.12",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^20.11.24",
+    "@types/node": "^24.2.0",
     "@types/pg": "^8.15.5",
     "@types/socket.io": "^3.0.2",
     "@types/supertest": "^6.0.2",
