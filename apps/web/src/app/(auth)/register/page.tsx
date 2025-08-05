@@ -67,6 +67,7 @@ export default function RegisterPage() {
         setError(errorData.error || 'Error al crear la cuenta');
       }
     } catch (err) {
+      console.error('Registration error:', err);
       setError('Error al crear la cuenta');
     } finally {
       setIsLoading(false);

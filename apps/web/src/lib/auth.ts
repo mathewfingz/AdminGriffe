@@ -55,6 +55,7 @@ export const authOptions: NextAuthOptions = {
             image: user.image,
           }
         } catch (error) {
+          console.error('Error during sign in:', error)
           return null
         }
       },

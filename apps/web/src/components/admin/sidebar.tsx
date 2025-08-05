@@ -1,18 +1,19 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { 
   BarChart3, 
   ShoppingCart, 
   FileText, 
   Users, 
-  Image, 
   DollarSign, 
   TrendingUp, 
   Megaphone, 
   Percent,
-  ChevronRight
+  ChevronRight,
+  Image as ImageIcon
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -76,7 +77,7 @@ export function Sidebar() {
         {
           title: 'Contenido Tienda',
           href: '/admin/contenido-tienda',
-          icon: <Image className="w-4 h-4" />,
+          icon: <ImageIcon className="w-4 h-4" />,
           isActive: pathname === '/admin/contenido-tienda'
         },
         {
@@ -110,8 +111,19 @@ export function Sidebar() {
   return (
     <div className="w-64 h-full bg-[#EBEBEB] border-r border-gray-200">
       <div className="p-6">
-        <h1 className="text-xl font-bold text-gray-900 font-manrope">AdminGriffe</h1>
-        <p className="text-sm text-gray-600 mt-1">Panel de Administración</p>
+        <div className="flex items-center gap-3">
+          <Image
+            src="/nova-haven-logo.svg"
+            width={32}
+            height={32}
+            className="w-8 h-8"
+            alt="Nova Haven Admin Logo"
+          />
+          <div>
+            <h1 className="text-xl font-bold text-gray-900 font-manrope">AdminGriffe</h1>
+            <p className="text-sm text-gray-600 mt-1">Panel de Administración</p>
+          </div>
+        </div>
       </div>
 
       <nav className="mt-6 px-4">

@@ -50,6 +50,7 @@ export default function LoginPage() {
         router.push('/dashboard');
       }
     } catch (err) {
+      console.error('Login error:', err);
       setError('Error al iniciar sesión');
     } finally {
       setIsLoading(false);
@@ -61,6 +62,7 @@ export default function LoginPage() {
     try {
       await signIn('google', { callbackUrl: '/dashboard' });
     } catch (err) {
+      console.error('Google sign-in error:', err);
       setError('Error al iniciar sesión con Google');
       setIsLoading(false);
     }

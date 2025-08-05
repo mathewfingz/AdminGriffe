@@ -78,6 +78,7 @@ export default function ResetPasswordPage() {
         setError(errorData.error || 'Error al restablecer la contraseña');
       }
     } catch (err) {
+      console.error('Reset password error:', err);
       setError('Error al restablecer la contraseña');
     } finally {
       setIsLoading(false);

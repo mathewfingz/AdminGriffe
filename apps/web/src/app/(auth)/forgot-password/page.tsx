@@ -49,6 +49,7 @@ export default function ForgotPasswordPage() {
         setError(errorData.error || 'Error al enviar el email');
       }
     } catch (err) {
+      console.error('Forgot password error:', err);
       setError('Error al enviar el email');
     } finally {
       setIsLoading(false);
