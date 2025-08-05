@@ -2,23 +2,49 @@ import { render, screen } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import AdminPage from '../page'
 
+// Mock next/navigation
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    prefetch: vi.fn(),
+  }),
+  useSearchParams: () => ({
+    get: vi.fn(),
+  }),
+}));
+
+// Mock next-auth
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({
+    data: {
+      user: {
+        id: '1',
+        email: 'admin@test.com',
+        role: 'ADMIN',
+      },
+    },
+    status: 'authenticated',
+  }),
+}));
+
 // Mock framer-motion to avoid animation issues in tests
 vi.mock('framer-motion', () => ({
   motion: {
-    div: ({ children, ...props }: any) => <div {...props}>{children}</div>,
-    tr: ({ children, ...props }: any) => <tr {...props}>{children}</tr>,
+    div: ({ children, ...props }: React.ComponentProps<'div'>) => <div {...props}>{children}</div>,
+    tr: ({ children, ...props }: React.ComponentProps<'tr'>) => <tr {...props}>{children}</tr>,
   },
 }))
 
 // Mock recharts to avoid canvas issues in tests
 vi.mock('recharts', () => ({
-  AreaChart: ({ children }: any) => <div data-testid="area-chart">{children}</div>,
+  AreaChart: ({ children }: { children?: React.ReactNode }) => <div data-testid="area-chart">{children}</div>,
   Area: () => <div data-testid="area" />,
   XAxis: () => <div data-testid="x-axis" />,
   YAxis: () => <div data-testid="y-axis" />,
   CartesianGrid: () => <div data-testid="cartesian-grid" />,
   Tooltip: () => <div data-testid="tooltip" />,
-  ResponsiveContainer: ({ children }: any) => <div data-testid="responsive-container">{children}</div>,
+  ResponsiveContainer: ({ children }: { children?: React.ReactNode }) => <div data-testid="responsive-container">{children}</div>,
 }))
 
 describe('AdminPage', () => {

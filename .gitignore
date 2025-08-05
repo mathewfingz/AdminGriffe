@@ -112,3 +112,5 @@ prisma/migrations/
 package-lock.json
 yarn.lock
 # pnpm-lock.yaml (keep this one)
+*storybook.log
+storybook-static

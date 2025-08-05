@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: admin-griffe-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: admin_griffe
+      POSTGRES_USER: admin_griffe
+      POSTGRES_PASSWORD: admin_griffe_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./apps/web/prisma/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin_griffe -d admin_griffe"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis for session storage (optional)
+  redis:
+    image: redis:7-alpine
+    container_name: admin-griffe-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Next.js Application
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner
+    container_name: admin-griffe-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://admin_griffe:admin_griffe_password@postgres:5432/admin_griffe
+      - NEXTAUTH_SECRET=your-super-secret-key-change-in-production
+      - NEXTAUTH_URL=http://localhost:3000
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Development database for testing
+  postgres-test:
+    image: postgres:15-alpine
+    container_name: admin-griffe-test-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: admin_griffe_test
+      POSTGRES_USER: admin_griffe_test
+      POSTGRES_PASSWORD: admin_griffe_test_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    profiles:
+      - test
+
+volumes:
+  postgres_data:
+    driver: local
+  postgres_test_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  default:
+    name: admin-griffe-network

@@ -1,18 +1,26 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { 
   BarChart3, 
   ShoppingCart, 
   FileText, 
   Users, 
-  Image, 
   DollarSign, 
   TrendingUp, 
   Megaphone, 
   Percent,
-  ChevronRight
+  ChevronRight,
+  Image as ImageIcon,
+  Store,
+  Package,
+  CreditCard,
+  PieChart,
+  UserCheck,
+  Headphones,
+  Settings
 } from 'lucide-react'
 import { useState } from 'react'
 
@@ -39,69 +47,61 @@ export function Sidebar() {
       items: [
         {
           title: 'Dashboard',
-          href: '/admin/dashboard',
+          href: '/admin',
           icon: <BarChart3 className="w-4 h-4" />,
-          isActive: pathname === '/admin/dashboard'
-        },
-        {
-          title: 'Dashboard Tienda',
-          href: '/admin/dashboard-tienda',
-          icon: <BarChart3 className="w-4 h-4" />,
-          isActive: pathname === '/admin/dashboard-tienda'
+          isActive: pathname === '/admin' || pathname === '/admin/dashboard'
         }
       ]
     },
     {
-      title: 'Vista Tienda',
-      isCollapsible: true,
+      title: 'Gestión',
       items: [
         {
-          title: 'Pedidos Tienda',
-          href: '/admin/pedidos-tienda',
-          icon: <ShoppingCart className="w-4 h-4" />,
-          isActive: pathname === '/admin/pedidos-tienda'
+          title: 'Tiendas',
+          href: '/admin/tiendas',
+          icon: <Store className="w-4 h-4" />,
+          isActive: pathname.startsWith('/admin/tiendas')
         },
         {
-          title: 'Productos Tienda',
-          href: '/admin/productos-tienda',
-          icon: <FileText className="w-4 h-4" />,
-          isActive: pathname === '/admin/productos-tienda'
+          title: 'Pedidos',
+          href: '/admin/pedidos',
+          icon: <Package className="w-4 h-4" />,
+          isActive: pathname === '/admin/pedidos'
         },
         {
-          title: 'Clientes Tienda',
-          href: '/admin/clientes-tienda',
-          icon: <Users className="w-4 h-4" />,
-          isActive: pathname === '/admin/clientes-tienda'
+          title: 'Finanzas',
+          href: '/admin/finanzas',
+          icon: <CreditCard className="w-4 h-4" />,
+          isActive: pathname === '/admin/finanzas'
         },
         {
-          title: 'Contenido Tienda',
-          href: '/admin/contenido-tienda',
-          icon: <Image className="w-4 h-4" />,
-          isActive: pathname === '/admin/contenido-tienda'
+          title: 'Reportes',
+          href: '/admin/reportes',
+          icon: <PieChart className="w-4 h-4" />,
+          isActive: pathname === '/admin/reportes'
+        }
+      ]
+    },
+    {
+      title: 'Administración',
+      items: [
+        {
+          title: 'Usuarios',
+          href: '/admin/usuarios',
+          icon: <UserCheck className="w-4 h-4" />,
+          isActive: pathname === '/admin/usuarios'
         },
         {
-          title: 'Finanzas Tienda',
-          href: '/admin/finanzas-tienda',
-          icon: <DollarSign className="w-4 h-4" />,
-          isActive: pathname === '/admin/finanzas-tienda'
+          title: 'Soporte',
+          href: '/admin/soporte',
+          icon: <Headphones className="w-4 h-4" />,
+          isActive: pathname === '/admin/soporte'
         },
         {
-          title: 'Analítica Tienda',
-          href: '/admin/analitica-tienda',
-          icon: <TrendingUp className="w-4 h-4" />,
-          isActive: pathname === '/admin/analitica-tienda'
-        },
-        {
-          title: 'Marketing Tienda',
-          href: '/admin/marketing-tienda',
-          icon: <Megaphone className="w-4 h-4" />,
-          isActive: pathname === '/admin/marketing-tienda'
-        },
-        {
-          title: 'Descuentos Tienda',
-          href: '/admin/descuentos-tienda',
-          icon: <Percent className="w-4 h-4" />,
-          isActive: pathname === '/admin/descuentos-tienda'
+          title: 'Configuración',
+          href: '/admin/configuracion',
+          icon: <Settings className="w-4 h-4" />,
+          isActive: pathname === '/admin/configuracion'
         }
       ]
     }
@@ -110,8 +110,19 @@ export function Sidebar() {
   return (
     <div className="w-64 h-full bg-[#EBEBEB] border-r border-gray-200">
       <div className="p-6">
-        <h1 className="text-xl font-bold text-gray-900 font-manrope">AdminGriffe</h1>
-        <p className="text-sm text-gray-600 mt-1">Panel de Administración</p>
+        <div className="flex items-center gap-3">
+          <Image
+            src="/nova-haven-logo.svg"
+            width={32}
+            height={32}
+            className="w-8 h-8"
+            alt="Nova Haven Admin Logo"
+          />
+          <div>
+            <h1 className="text-xl font-bold text-gray-900 font-manrope">AdminGriffe</h1>
+            <p className="text-sm text-gray-600 mt-1">Panel de Administración</p>
+          </div>
+        </div>
       </div>
 
       <nav className="mt-6 px-4">
