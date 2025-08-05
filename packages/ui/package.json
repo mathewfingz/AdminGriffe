@@ -29,6 +29,8 @@
     "react-dom": "^19.1.0"
   },
   "scripts": {
+    "test": "vitest",
+    "test:coverage": "vitest --coverage",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build"
   }
