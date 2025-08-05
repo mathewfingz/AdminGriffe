@@ -1,9 +1,39 @@
 apiVersion: 1
 
 providers:
-  - name: 'AdminGriffe Dashboards'
+  - name: 'audit-system'
     orgId: 1
-    folder: 'AdminGriffe'
+    folder: 'Audit System'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+
+  - name: 'infrastructure'
+    orgId: 1
+    folder: 'Infrastructure'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+
+  - name: 'security'
+    orgId: 1
+    folder: 'Security'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+
+  - name: 'compliance'
+    orgId: 1
+    folder: 'Compliance'
     type: file
     disableDeletion: false
     updateIntervalSeconds: 10

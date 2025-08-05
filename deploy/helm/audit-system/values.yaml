@@ -1,0 +1,326 @@
+# Default values for audit-system
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+# API Gateway configuration
+apiGateway:
+  enabled: true
+  replicaCount: 3
+  image:
+    repository: audit-system/api-gateway
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  
+  service:
+    type: ClusterIP
+    port: 3000
+    targetPort: 3000
+  
+  ingress:
+    enabled: true
+    className: "nginx"
+    annotations:
+      nginx.ingress.kubernetes.io/rate-limit: "1000"
+      nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    hosts:
+      - host: audit-api.local
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 512Mi
+  
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 65
+    targetMemoryUtilizationPercentage: 70
+  
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  
+  env:
+    NODE_ENV: production
+    LOG_LEVEL: info
+    JWT_SECRET: ""
+    DATABASE_URL: ""
+    REDIS_URL: ""
+    KAFKA_BROKERS: ""
+
+# Sync Worker configuration
+syncWorker:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: audit-system/sync-worker
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 70
+  
+  env:
+    NODE_ENV: production
+    LOG_LEVEL: info
+    DATABASE_URL: ""
+    REDIS_URL: ""
+    KAFKA_BROKERS: ""
+
+# PostgreSQL configuration
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "postgres-password"
+    username: "audit_user"
+    password: "audit-password"
+    database: "audit_db"
+  
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+    
+    configuration: |
+      wal_level = logical
+      max_wal_senders = 10
+      max_replication_slots = 10
+      shared_preload_libraries = 'pg_stat_statements'
+      log_statement = 'all'
+      log_min_duration_statement = 1000
+
+# MySQL configuration
+mysql:
+  enabled: true
+  auth:
+    rootPassword: "mysql-root-password"
+    username: "audit_user"
+    password: "audit-password"
+    database: "audit_db"
+  
+  primary:
+    persistence:
+      enabled: true
+      size: 20Gi
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+    
+    configuration: |
+      [mysqld]
+      server-id = 1
+      log-bin = mysql-bin
+      binlog-format = ROW
+      gtid-mode = ON
+      enforce-gtid-consistency = ON
+
+# MongoDB configuration
+mongodb:
+  enabled: true
+  auth:
+    enabled: true
+    rootPassword: "mongo-root-password"
+    username: "audit_user"
+    password: "audit-password"
+    database: "audit_db"
+  
+  persistence:
+    enabled: true
+    size: 20Gi
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  
+  replicaSet:
+    enabled: true
+    replicas:
+      secondary: 2
+      arbiter: 1
+
+# Redis configuration
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "redis-password"
+  
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+  
+  replica:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# Kafka configuration
+kafka:
+  enabled: true
+  replicaCount: 3
+  
+  persistence:
+    enabled: true
+    size: 10Gi
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+  
+  zookeeper:
+    enabled: true
+    replicaCount: 3
+    persistence:
+      enabled: true
+      size: 5Gi
+
+# Prometheus configuration
+prometheus:
+  enabled: true
+  server:
+    persistentVolume:
+      enabled: true
+      size: 20Gi
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 2Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+  
+  alertmanager:
+    enabled: true
+    persistentVolume:
+      enabled: true
+      size: 5Gi
+
+# Grafana configuration
+grafana:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 5Gi
+  
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  
+  adminPassword: "grafana-admin-password"
+  
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          url: http://{{ include "audit-system.fullname" . }}-prometheus-server
+          access: proxy
+          isDefault: true
+
+# Security configuration
+security:
+  networkPolicies:
+    enabled: true
+  
+  podSecurityPolicy:
+    enabled: true
+  
+  rbac:
+    create: true
+  
+  serviceAccount:
+    create: true
+    annotations: {}
+
+# Monitoring configuration
+monitoring:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+  
+  prometheusRule:
+    enabled: true
+
+# Backup configuration
+backup:
+  enabled: true
+  schedule: "0 2 * * *"
+  retention: "7d"
+  
+  s3:
+    enabled: false
+    bucket: ""
+    region: ""
+    accessKey: ""
+    secretKey: ""
+
+# Compliance configuration
+compliance:
+  retention:
+    auditLogs: "7y"
+    syncLogs: "1y"
+    metrics: "90d"
+  
+  encryption:
+    enabled: true
+    algorithm: "AES-256-GCM"
+  
+  export:
+    enabled: true
+    schedule: "0 1 * * 0"  # Weekly on Sunday
+    format: "json"

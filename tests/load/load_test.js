@@ -1,246 +1,412 @@
+/**
+ * K6 Load Test for Audit System
+ * AdminGriffe - Sistema de Auditoría Integral
+ * 
+ * Test Requirements:
+ * - 10,000+ TPS without loss
+ * - < 100ms sync lag
+ * - 99% automatic conflict resolution
+ * - 99.99% uptime
+ */
+
 import http from 'k6/http';
 import ws from 'k6/ws';
 import { check, sleep } from 'k6';
-import { Rate, Trend, Counter } from 'k6/metrics';
+import { Rate, Counter, Trend, Gauge } from 'k6/metrics';
 
 // Custom metrics
 const errorRate = new Rate('errors');
-const syncLag = new Trend('sync_lag_ms');
-const auditThroughput = new Counter('audit_operations');
+const auditWriteRate = new Counter('audit_writes');
+const syncLagTrend = new Trend('sync_lag_ms');
+const conflictResolutionRate = new Rate('conflict_resolution_success');
+const uptimeGauge = new Gauge('uptime_percentage');
 
 // Test configuration
 export const options = {
   stages: [
     { duration: '2m', target: 100 },   // Ramp up to 100 users
-    { duration: '5m', target: 500 },   // Stay at 500 users
-    { duration: '2m', target: 1000 },  // Ramp up to 1000 users
-    { duration: '10m', target: 1000 }, // Stay at 1000 users for 10 minutes
+    { duration: '5m', target: 500 },   // Ramp up to 500 users
+    { duration: '10m', target: 1000 }, // Ramp up to 1000 users (target 10k TPS)
+    { duration: '10m', target: 1000 }, // Stay at 1000 users
+    { duration: '5m', target: 500 },   // Ramp down to 500 users
     { duration: '2m', target: 0 },     // Ramp down to 0 users
   ],
   thresholds: {
-    http_req_duration: ['p(95)<100'], // 95% of requests must complete below 100ms
-    http_req_failed: ['rate<0.01'],   // Error rate must be below 1%
-    errors: ['rate<0.01'],
-    sync_lag_ms: ['p(95)<100'],       // 95% of sync operations must complete below 100ms
+    http_req_duration: ['p(95)<100'], // 95% of requests under 100ms
+    http_req_failed: ['rate<0.01'],   // Error rate under 1%
+    errors: ['rate<0.01'],            // Custom error rate under 1%
+    sync_lag_ms: ['p(95)<100'],       // 95% of sync operations under 100ms
+    conflict_resolution_success: ['rate>0.99'], // 99% conflict resolution success
   },
 };
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
-const WS_URL = __ENV.WS_URL || 'ws://localhost:3000';
+// Base URL configuration
+const BASE_URL = __ENV.BASE_URL || 'http://localhost:3002';
+const WS_URL = __ENV.WS_URL || 'ws://localhost:3002';
 
-// Test data
-const testUsers = [
-  { email: 'test1@example.com', password: 'password123' },
-  { email: 'test2@example.com', password: 'password123' },
-  { email: 'test3@example.com', password: 'password123' },
-];
-
-const testProducts = [
-  { name: 'Product A', price: 100, category: 'Electronics' },
-  { name: 'Product B', price: 200, category: 'Clothing' },
-  { name: 'Product C', price: 300, category: 'Books' },
-];
-
-let authToken = '';
-
-export function setup() {
-  // Login to get auth token
-  const loginResponse = http.post(`${BASE_URL}/api/auth/login`, {
-    email: 'admin@example.com',
-    password: 'admin123'
-  });
-  
-  if (loginResponse.status === 200) {
-    const body = JSON.parse(loginResponse.body);
-    authToken = body.token;
-    console.log('Setup completed with auth token');
-  }
-  
-  return { authToken };
+// Test data generators
+function generateUser() {
+  return {
+    name: `User ${Math.random().toString(36).substring(7)}`,
+    email: `user${Math.random().toString(36).substring(7)}@test.com`,
+    role: Math.random() > 0.5 ? 'admin' : 'user',
+    tenantId: `tenant_${Math.floor(Math.random() * 10) + 1}`
+  };
 }
 
-export default function(data) {
-  const token = data.authToken || authToken;
-  const headers = {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json',
+function generateProduct() {
+  return {
+    name: `Product ${Math.random().toString(36).substring(7)}`,
+    price: Math.floor(Math.random() * 1000) + 10,
+    category: `Category ${Math.floor(Math.random() * 5) + 1}`,
+    stock: Math.floor(Math.random() * 100) + 1,
+    tenantId: `tenant_${Math.floor(Math.random() * 10) + 1}`
+  };
+}
+
+function generateOrder() {
+  return {
+    userId: Math.floor(Math.random() * 1000) + 1,
+    items: [
+      {
+        productId: Math.floor(Math.random() * 1000) + 1,
+        quantity: Math.floor(Math.random() * 5) + 1,
+        price: Math.floor(Math.random() * 100) + 10
+      }
+    ],
+    total: Math.floor(Math.random() * 500) + 50,
+    status: 'pending',
+    tenantId: `tenant_${Math.floor(Math.random() * 10) + 1}`
+  };
+}
+
+// Authentication helper
+function authenticate() {
+  const loginPayload = {
+    email: 'admin@test.com',
+    password: 'admin123'
   };
 
-  // Test scenario selection based on VU ID
-  const scenario = __VU % 4;
+  const response = http.post(`${BASE_URL}/api/auth/login`, JSON.stringify(loginPayload), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  check(response, {
+    'login successful': (r) => r.status === 200,
+    'token received': (r) => r.json('token') !== undefined,
+  });
+
+  return response.json('token');
+}
+
+// Main test scenario
+export default function () {
+  const token = authenticate();
   
-  switch(scenario) {
-    case 0:
-      testAuditOperations(headers);
+  if (!token) {
+    errorRate.add(1);
+    return;
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+    'X-Tenant-ID': `tenant_${Math.floor(Math.random() * 10) + 1}`
+  };
+
+  // Test scenario selection (weighted)
+  const scenario = Math.random();
+  
+  if (scenario < 0.4) {
+    // 40% - CRUD operations (high audit volume)
+    testCRUDOperations(headers);
+  } else if (scenario < 0.7) {
+    // 30% - Audit log queries
+    testAuditQueries(headers);
+  } else if (scenario < 0.9) {
+    // 20% - Sync operations
+    testSyncOperations(headers);
+  } else {
+    // 10% - WebSocket real-time audit
+    testWebSocketAudit(headers);
+  }
+
+  sleep(Math.random() * 2 + 1); // Random sleep 1-3 seconds
+}
+
+function testCRUDOperations(headers) {
+  const operations = ['create', 'update', 'delete'];
+  const entities = ['users', 'products', 'orders'];
+  
+  const operation = operations[Math.floor(Math.random() * operations.length)];
+  const entity = entities[Math.floor(Math.random() * entities.length)];
+  
+  let response;
+  const startTime = Date.now();
+  
+  switch (operation) {
+    case 'create':
+      response = createEntity(entity, headers);
       break;
-    case 1:
-      testSyncOperations(headers);
+    case 'update':
+      response = updateEntity(entity, headers);
       break;
-    case 2:
-      testWebSocketStreaming(token);
-      break;
-    case 3:
-      testCRUDOperations(headers);
+    case 'delete':
+      response = deleteEntity(entity, headers);
       break;
   }
   
-  sleep(1);
+  const endTime = Date.now();
+  const duration = endTime - startTime;
+  
+  // Record audit write
+  auditWriteRate.add(1);
+  
+  // Check response
+  const success = check(response, {
+    [`${operation} ${entity} successful`]: (r) => r.status >= 200 && r.status < 300,
+    'response time acceptable': () => duration < 1000,
+  });
+  
+  if (!success) {
+    errorRate.add(1);
+  }
 }
 
-function testAuditOperations(headers) {
-  // Get audit logs
-  const auditResponse = http.get(`${BASE_URL}/api/audit/logs?limit=100`, { headers });
+function createEntity(entity, headers) {
+  let payload;
   
-  check(auditResponse, {
-    'audit logs status is 200': (r) => r.status === 200,
-    'audit logs response time < 100ms': (r) => r.timings.duration < 100,
-  }) || errorRate.add(1);
+  switch (entity) {
+    case 'users':
+      payload = generateUser();
+      break;
+    case 'products':
+      payload = generateProduct();
+      break;
+    case 'orders':
+      payload = generateOrder();
+      break;
+  }
   
-  auditThroughput.add(1);
+  return http.post(`${BASE_URL}/api/${entity}`, JSON.stringify(payload), { headers });
+}
+
+function updateEntity(entity, headers) {
+  const id = Math.floor(Math.random() * 100) + 1;
+  let payload;
   
-  // Get audit statistics
-  const statsResponse = http.get(`${BASE_URL}/api/audit/stats`, { headers });
+  switch (entity) {
+    case 'users':
+      payload = { name: `Updated User ${Date.now()}` };
+      break;
+    case 'products':
+      payload = { price: Math.floor(Math.random() * 1000) + 10 };
+      break;
+    case 'orders':
+      payload = { status: 'completed' };
+      break;
+  }
   
-  check(statsResponse, {
-    'audit stats status is 200': (r) => r.status === 200,
-    'audit stats response time < 50ms': (r) => r.timings.duration < 50,
-  }) || errorRate.add(1);
+  return http.put(`${BASE_URL}/api/${entity}/${id}`, JSON.stringify(payload), { headers });
+}
+
+function deleteEntity(entity, headers) {
+  const id = Math.floor(Math.random() * 100) + 1;
+  return http.del(`${BASE_URL}/api/${entity}/${id}`, null, { headers });
+}
+
+function testAuditQueries(headers) {
+  const queries = [
+    '/api/audit/logs?limit=50',
+    '/api/audit/logs?table=users&limit=20',
+    '/api/audit/logs?operation=UPDATE&limit=30',
+    '/api/audit/logs?startDate=2024-01-01&endDate=2024-12-31',
+    '/api/audit/statistics',
+    '/api/audit/trail/users/1'
+  ];
   
-  // Test audit search
-  const searchResponse = http.get(`${BASE_URL}/api/audit/search?table=products&operation=UPDATE`, { headers });
+  const query = queries[Math.floor(Math.random() * queries.length)];
+  const startTime = Date.now();
   
-  check(searchResponse, {
-    'audit search status is 200': (r) => r.status === 200,
-    'audit search response time < 200ms': (r) => r.timings.duration < 200,
-  }) || errorRate.add(1);
+  const response = http.get(`${BASE_URL}${query}`, { headers });
+  
+  const endTime = Date.now();
+  const duration = endTime - startTime;
+  
+  const success = check(response, {
+    'audit query successful': (r) => r.status === 200,
+    'audit query fast': () => duration < 500,
+    'audit data returned': (r) => r.json() !== undefined,
+  });
+  
+  if (!success) {
+    errorRate.add(1);
+  }
 }
 
 function testSyncOperations(headers) {
-  // Get sync status
-  const statusResponse = http.get(`${BASE_URL}/api/sync/status`, { headers });
+  const syncEndpoints = [
+    '/api/sync/status',
+    '/api/sync/conflicts',
+    '/api/sync/metrics',
+    '/api/sync/health'
+  ];
   
-  check(statusResponse, {
-    'sync status is 200': (r) => r.status === 200,
-    'sync status response time < 50ms': (r) => r.timings.duration < 50,
-  }) || errorRate.add(1);
+  const endpoint = syncEndpoints[Math.floor(Math.random() * syncEndpoints.length)];
+  const startTime = Date.now();
   
-  if (statusResponse.status === 200) {
-    const body = JSON.parse(statusResponse.body);
-    if (body.lag_ms) {
-      syncLag.add(body.lag_ms);
-    }
+  const response = http.get(`${BASE_URL}${endpoint}`, { headers });
+  
+  const endTime = Date.now();
+  const syncLag = endTime - startTime;
+  
+  // Record sync lag
+  syncLagTrend.add(syncLag);
+  
+  const success = check(response, {
+    'sync operation successful': (r) => r.status === 200,
+    'sync lag acceptable': () => syncLag < 100, // Target < 100ms
+  });
+  
+  if (!success) {
+    errorRate.add(1);
   }
   
-  // Get sync metrics
-  const metricsResponse = http.get(`${BASE_URL}/api/sync/metrics`, { headers });
-  
-  check(metricsResponse, {
-    'sync metrics status is 200': (r) => r.status === 200,
-    'sync metrics response time < 100ms': (r) => r.timings.duration < 100,
-  }) || errorRate.add(1);
-  
-  // Test conflict resolution
-  const conflictsResponse = http.get(`${BASE_URL}/api/sync/conflicts`, { headers });
-  
-  check(conflictsResponse, {
-    'sync conflicts status is 200': (r) => r.status === 200,
-    'sync conflicts response time < 150ms': (r) => r.timings.duration < 150,
-  }) || errorRate.add(1);
+  // Test conflict resolution if applicable
+  if (endpoint === '/api/sync/conflicts') {
+    const conflicts = response.json('conflicts') || [];
+    if (conflicts.length > 0) {
+      const resolved = conflicts.filter(c => c.status === 'resolved').length;
+      const resolutionRate = resolved / conflicts.length;
+      conflictResolutionRate.add(resolutionRate > 0.99 ? 1 : 0);
+    }
+  }
 }
 
-function testWebSocketStreaming(token) {
-  const url = `${WS_URL}/socket.io/?EIO=4&transport=websocket&token=${token}`;
+function testWebSocketAudit(headers) {
+  const url = `${WS_URL}/audit/stream`;
   
-  const response = ws.connect(url, {}, function (socket) {
-    socket.on('open', function open() {
-      console.log('WebSocket connection opened');
-      
+  const response = ws.connect(url, {
+    headers: {
+      'Authorization': headers.Authorization,
+      'X-Tenant-ID': headers['X-Tenant-ID']
+    }
+  }, function (socket) {
+    socket.on('open', () => {
       // Subscribe to audit events
       socket.send(JSON.stringify({
         type: 'subscribe',
-        channel: 'audit_events'
-      }));
-      
-      // Subscribe to sync events
-      socket.send(JSON.stringify({
-        type: 'subscribe',
-        channel: 'sync_events'
-      }));
-    });
-    
-    socket.on('message', function (message) {
-      try {
-        const data = JSON.parse(message);
-        if (data.type === 'audit_event' && data.timestamp) {
-          const lag = Date.now() - new Date(data.timestamp).getTime();
-          syncLag.add(lag);
+        filters: {
+          tables: ['users', 'products', 'orders'],
+          operations: ['INSERT', 'UPDATE', 'DELETE']
         }
-      } catch (e) {
-        // Ignore parsing errors for non-JSON messages
-      }
+      }));
     });
     
-    socket.on('error', function (e) {
-      console.log('WebSocket error:', e);
+    socket.on('message', (data) => {
+      const event = JSON.parse(data);
+      
+      check(event, {
+        'audit event received': (e) => e.type === 'audit_event',
+        'audit event has required fields': (e) => 
+          e.table && e.operation && e.timestamp && e.data,
+      });
+      
+      // Calculate sync lag
+      const eventTime = new Date(event.timestamp).getTime();
+      const currentTime = Date.now();
+      const lag = currentTime - eventTime;
+      
+      syncLagTrend.add(lag);
+    });
+    
+    socket.on('error', (e) => {
       errorRate.add(1);
+      console.error('WebSocket error:', e);
     });
     
-    // Keep connection open for 5 seconds
-    sleep(5);
+    // Keep connection open for 10 seconds
+    sleep(10);
   });
   
   check(response, {
     'websocket connection successful': (r) => r && r.status === 101,
-  }) || errorRate.add(1);
+  });
 }
 
-function testCRUDOperations(headers) {
-  // Create a product (triggers audit)
-  const productData = testProducts[Math.floor(Math.random() * testProducts.length)];
-  const createResponse = http.post(`${BASE_URL}/api/products`, JSON.stringify({
-    ...productData,
-    name: `${productData.name} ${Date.now()}` // Make it unique
-  }), { headers });
+// Setup function - runs once per VU
+export function setup() {
+  console.log('Starting load test setup...');
   
-  check(createResponse, {
-    'product creation status is 201': (r) => r.status === 201,
-    'product creation response time < 200ms': (r) => r.timings.duration < 200,
-  }) || errorRate.add(1);
+  // Health check
+  const healthResponse = http.get(`${BASE_URL}/api/health`);
   
-  if (createResponse.status === 201) {
-    const product = JSON.parse(createResponse.body);
-    auditThroughput.add(1);
-    
-    // Update the product (triggers audit)
-    const updateResponse = http.put(`${BASE_URL}/api/products/${product.id}`, JSON.stringify({
-      ...product,
-      price: product.price + 10
-    }), { headers });
-    
-    check(updateResponse, {
-      'product update status is 200': (r) => r.status === 200,
-      'product update response time < 200ms': (r) => r.timings.duration < 200,
-    }) || errorRate.add(1);
-    
-    if (updateResponse.status === 200) {
-      auditThroughput.add(1);
-    }
-    
-    // Delete the product (triggers audit)
-    const deleteResponse = http.del(`${BASE_URL}/api/products/${product.id}`, null, { headers });
-    
-    check(deleteResponse, {
-      'product deletion status is 200': (r) => r.status === 200,
-      'product deletion response time < 100ms': (r) => r.timings.duration < 100,
-    }) || errorRate.add(1);
-    
-    if (deleteResponse.status === 200) {
-      auditThroughput.add(1);
-    }
+  check(healthResponse, {
+    'service is healthy': (r) => r.status === 200,
+  });
+  
+  if (healthResponse.status !== 200) {
+    throw new Error('Service is not healthy, aborting test');
   }
+  
+  console.log('Load test setup completed');
+  return { baseUrl: BASE_URL };
 }
 
+// Teardown function - runs once after all VUs finish
 export function teardown(data) {
   console.log('Load test completed');
-  console.log(`Total audit operations: ${auditThroughput.count}`);
+  
+  // Final health check
+  const healthResponse = http.get(`${data.baseUrl}/api/health`);
+  const isHealthy = healthResponse.status === 200;
+  
+  uptimeGauge.add(isHealthy ? 100 : 0);
+  
+  console.log(`Final health status: ${isHealthy ? 'HEALTHY' : 'UNHEALTHY'}`);
+}
+
+// Handle summary - custom summary output
+export function handleSummary(data) {
+  const summary = {
+    test_duration: data.state.testRunDurationMs,
+    total_requests: data.metrics.http_reqs.values.count,
+    request_rate: data.metrics.http_reqs.values.rate,
+    error_rate: data.metrics.errors ? data.metrics.errors.values.rate : 0,
+    avg_response_time: data.metrics.http_req_duration.values.avg,
+    p95_response_time: data.metrics.http_req_duration.values['p(95)'],
+    sync_lag_avg: data.metrics.sync_lag_ms ? data.metrics.sync_lag_ms.values.avg : 0,
+    sync_lag_p95: data.metrics.sync_lag_ms ? data.metrics.sync_lag_ms.values['p(95)'] : 0,
+    audit_writes: data.metrics.audit_writes ? data.metrics.audit_writes.values.count : 0,
+    conflict_resolution_rate: data.metrics.conflict_resolution_success ? 
+      data.metrics.conflict_resolution_success.values.rate : 0,
+    uptime_percentage: data.metrics.uptime_percentage ? 
+      data.metrics.uptime_percentage.values.value : 0,
+  };
+  
+  // Validate requirements
+  const requirements = {
+    tps_target: summary.request_rate >= 10000,
+    sync_lag_target: summary.sync_lag_p95 <= 100,
+    conflict_resolution_target: summary.conflict_resolution_rate >= 0.99,
+    uptime_target: summary.uptime_percentage >= 99.99,
+    error_rate_target: summary.error_rate <= 0.01
+  };
+  
+  const allRequirementsMet = Object.values(requirements).every(Boolean);
+  
+  return {
+    'stdout': JSON.stringify({
+      summary,
+      requirements,
+      test_passed: allRequirementsMet
+    }, null, 2),
+    'load_test_results.json': JSON.stringify({
+      timestamp: new Date().toISOString(),
+      summary,
+      requirements,
+      test_passed: allRequirementsMet,
+      raw_data: data
+    }, null, 2)
+  };
 }

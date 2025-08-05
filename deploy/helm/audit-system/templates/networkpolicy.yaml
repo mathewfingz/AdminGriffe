@@ -1,0 +1,319 @@
+{{- if .Values.security.networkPolicy.enabled }}
+# Network policy for API Gateway
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "audit-system.fullname" . }}-api-gateway-netpol
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow ingress from ingress controller
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: {{ .Values.security.networkPolicy.ingressNamespace | default "ingress-nginx" }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.apiGateway.service.targetPort }}
+    # Allow metrics scraping from monitoring namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: {{ .Values.security.networkPolicy.monitoringNamespace | default "monitoring" }}
+      ports:
+        - protocol: TCP
+          port: 9090
+    # Allow health checks from kube-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: TCP
+          port: {{ .Values.apiGateway.service.targetPort }}
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow access to databases
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: mysql
+      ports:
+        - protocol: TCP
+          port: 3306
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+    # Allow access to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Allow access to Kafka
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+---
+# Network policy for Sync Worker
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "audit-system.fullname" . }}-sync-worker-netpol
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync-worker
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sync-worker
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow metrics scraping from monitoring namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: {{ .Values.security.networkPolicy.monitoringNamespace | default "monitoring" }}
+      ports:
+        - protocol: TCP
+          port: 9090
+    # Allow health checks from kube-system
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow access to databases
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: mysql
+      ports:
+        - protocol: TCP
+          port: 3306
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: mongodb
+      ports:
+        - protocol: TCP
+          port: 27017
+    # Allow access to Redis
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Allow access to Kafka
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+---
+# Network policy for databases - restrict access to audit system components only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "audit-system.fullname" . }}-database-netpol
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow access from API Gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
+    # Allow access from Sync Worker
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: sync-worker
+    # Allow metrics scraping from monitoring namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: {{ .Values.security.networkPolicy.monitoringNamespace | default "monitoring" }}
+---
+# Network policy for Redis - restrict access to audit system components only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "audit-system.fullname" . }}-redis-netpol
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow access from API Gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
+    # Allow access from Sync Worker
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: sync-worker
+    # Allow metrics scraping from monitoring namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: {{ .Values.security.networkPolicy.monitoringNamespace | default "monitoring" }}
+      ports:
+        - protocol: TCP
+          port: 9121
+---
+# Network policy for Kafka - restrict access to audit system components only
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "audit-system.fullname" . }}-kafka-netpol
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: kafka
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow access from API Gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api-gateway
+    # Allow access from Sync Worker
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: sync-worker
+    # Allow Kafka inter-broker communication
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: kafka
+    # Allow Zookeeper communication
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: zookeeper
+    # Allow metrics scraping from monitoring namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: {{ .Values.security.networkPolicy.monitoringNamespace | default "monitoring" }}
+      ports:
+        - protocol: TCP
+          port: 9308
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow Zookeeper communication
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: zookeeper
+      ports:
+        - protocol: TCP
+          port: 2181
+    # Allow Kafka inter-broker communication
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "audit-system.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+{{- end }}

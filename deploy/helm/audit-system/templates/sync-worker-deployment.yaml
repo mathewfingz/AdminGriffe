@@ -1,0 +1,159 @@
+{{- if .Values.syncWorker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "audit-system.fullname" . }}-sync-worker
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync-worker
+spec:
+  {{- if not .Values.syncWorker.autoscaling.enabled }}
+  replicas: {{ .Values.syncWorker.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sync-worker
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "audit-system.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: sync-worker
+    spec:
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "audit-system.serviceAccountName" . }}
+      securityContext:
+        {{- include "audit-system.podSecurityContext" . | nindent 8 }}
+      containers:
+        - name: sync-worker
+          securityContext:
+            {{- include "audit-system.securityContext" . | nindent 12 }}
+          image: "{{ .Values.syncWorker.image.repository }}:{{ .Values.syncWorker.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.syncWorker.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: 9090
+              protocol: TCP
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.syncWorker.resources | nindent 12 }}
+          env:
+            {{- include "audit-system.commonEnv" . | nindent 12 }}
+            {{- include "audit-system.databaseEnv" . | nindent 12 }}
+            {{- include "audit-system.messagingEnv" . | nindent 12 }}
+            - name: WORKER_TYPE
+              value: "sync"
+            - name: KAFKA_CONSUMER_GROUP
+              value: "audit-sync-workers"
+            - name: SYNC_BATCH_SIZE
+              value: {{ .Values.syncWorker.config.batchSize | quote }}
+            - name: SYNC_TIMEOUT_MS
+              value: {{ .Values.syncWorker.config.timeoutMs | quote }}
+            - name: CONFLICT_RESOLUTION_STRATEGY
+              value: {{ .Values.syncWorker.config.conflictResolution | quote }}
+            - name: DEAD_LETTER_QUEUE_ENABLED
+              value: {{ .Values.syncWorker.config.deadLetterQueue.enabled | quote }}
+            - name: MAX_RETRY_ATTEMPTS
+              value: {{ .Values.syncWorker.config.maxRetryAttempts | quote }}
+          volumeMounts:
+            {{- include "audit-system.volumeMounts" . | nindent 12 }}
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+      volumes:
+        {{- include "audit-system.volumes" . | nindent 8 }}
+        - name: config
+          configMap:
+            name: {{ include "audit-system.fullname" . }}-config
+      {{- with .Values.syncWorker.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.syncWorker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.syncWorker.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+{{- if .Values.syncWorker.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "audit-system.fullname" . }}-sync-worker
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "audit-system.fullname" . }}-sync-worker
+  minReplicas: {{ .Values.syncWorker.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.syncWorker.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.syncWorker.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.syncWorker.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.syncWorker.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.syncWorker.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+    # Custom metric for sync lag
+    - type: Pods
+      pods:
+        metric:
+          name: sync_lag_ms
+        target:
+          type: AverageValue
+          averageValue: "100"
+{{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "audit-system.fullname" . }}-sync-worker
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync-worker
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sync-worker
+{{- end }}

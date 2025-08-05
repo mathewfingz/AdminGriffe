@@ -1,202 +1,345 @@
 groups:
-  - name: admingriffe_audit_alerts
+  - name: audit_system_alerts
     rules:
-      # High sync lag alert
+      # High-level system health alerts
       - alert: HighSyncLag
         expr: sync_lag_ms > 500
         for: 1m
         labels:
           severity: warning
-          service: sync
+          component: sync
         annotations:
-          summary: "High synchronization lag detected"
-          description: "Sync lag is {{ $value }}ms, which is above the 500ms threshold for {{ $labels.instance }}"
+          summary: "High sync lag detected"
+          description: "Sync lag is {{ $value }}ms for {{ $labels.source_engine }} to {{ $labels.target_engine }}, which is above the 500ms threshold"
 
-      # Critical sync lag alert
       - alert: CriticalSyncLag
         expr: sync_lag_ms > 2000
         for: 30s
         labels:
           severity: critical
-          service: sync
+          component: sync
         annotations:
-          summary: "Critical synchronization lag detected"
-          description: "Sync lag is {{ $value }}ms, which is critically high for {{ $labels.instance }}"
+          summary: "Critical sync lag detected"
+          description: "Sync lag is {{ $value }}ms for {{ $labels.source_engine }} to {{ $labels.target_engine }}, which is critically high"
 
-      # High error rate alert
       - alert: HighErrorRate
-        expr: rate(audit_errors_total[5m]) > 0.01
+        expr: rate(error_total[5m]) / rate(operations_total[5m]) > 0.01
         for: 5m
         labels:
           severity: warning
-          service: audit
+          component: application
         annotations:
-          summary: "High error rate in audit system"
+          summary: "High error rate detected"
           description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
 
-      # Critical error rate alert
       - alert: CriticalErrorRate
-        expr: rate(audit_errors_total[5m]) > 0.05
+        expr: rate(error_total[5m]) / rate(operations_total[5m]) > 0.05
         for: 2m
         labels:
           severity: critical
-          service: audit
+          component: application
         annotations:
-          summary: "Critical error rate in audit system"
+          summary: "Critical error rate detected"
           description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes"
 
-      # Queue depth alert
+      # Queue depth alerts
       - alert: HighQueueDepth
-        expr: sync_queue_depth > 1000
+        expr: queue_depth > 1000
         for: 2m
         labels:
           severity: warning
-          service: sync
+          component: queue
         annotations:
           summary: "High queue depth detected"
-          description: "Sync queue depth is {{ $value }}, indicating potential processing delays"
+          description: "Queue {{ $labels.queue_name }} has {{ $value }} pending jobs"
 
-      # Critical queue depth alert
       - alert: CriticalQueueDepth
-        expr: sync_queue_depth > 5000
+        expr: queue_depth > 5000
         for: 1m
         labels:
           severity: critical
-          service: sync
+          component: queue
         annotations:
           summary: "Critical queue depth detected"
-          description: "Sync queue depth is {{ $value }}, indicating severe processing delays"
+          description: "Queue {{ $labels.queue_name }} has {{ $value }} pending jobs, system may be overwhelmed"
 
-      # Conflict rate alert
+      # Conflict resolution alerts
       - alert: HighConflictRate
-        expr: rate(sync_conflicts_total[10m]) > 0.1
+        expr: rate(conflict_total[10m]) / rate(sync_operations_total[10m]) > 0.05
         for: 5m
         labels:
           severity: warning
-          service: sync
+          component: sync
         annotations:
           summary: "High conflict rate detected"
-          description: "Sync conflict rate is {{ $value | humanizePercentage }} over the last 10 minutes"
+          description: "Conflict rate is {{ $value | humanizePercentage }} over the last 10 minutes"
 
-      # Database connection alert
-      - alert: DatabaseConnectionDown
-        expr: up{job="postgres"} == 0
+      - alert: ManualConflictsPending
+        expr: conflicts_pending{resolution_type="manual"} > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: sync
+        annotations:
+          summary: "Manual conflicts pending resolution"
+          description: "{{ $value }} conflicts require manual resolution"
+
+      # Database connectivity alerts
+      - alert: DatabaseConnectionFailure
+        expr: db_connection_active == 0
         for: 30s
         labels:
           severity: critical
-          service: database
+          component: database
         annotations:
-          summary: "PostgreSQL database is down"
-          description: "PostgreSQL database connection is down for {{ $labels.instance }}"
+          summary: "Database connection failure"
+          description: "Connection to {{ $labels.db_engine }} database is down"
 
-      # Redis connection alert
-      - alert: RedisConnectionDown
-        expr: up{job="redis"} == 0
+      - alert: HighDatabaseConnectionUsage
+        expr: db_connections_active / db_connections_max > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          component: database
+        annotations:
+          summary: "High database connection usage"
+          description: "Database {{ $labels.db_engine }} is using {{ $value | humanizePercentage }} of available connections"
+
+      # Circuit breaker alerts
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state == 2
+        for: 1m
+        labels:
+          severity: warning
+          component: circuit_breaker
+        annotations:
+          summary: "Circuit breaker is open"
+          description: "Circuit breaker {{ $labels.circuit_name }} is open, requests are being rejected"
+
+      - alert: CircuitBreakerHighFailureRate
+        expr: rate(circuit_breaker_failures_total[5m]) / rate(circuit_breaker_requests_total[5m]) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+          component: circuit_breaker
+        annotations:
+          summary: "High circuit breaker failure rate"
+          description: "Circuit breaker {{ $labels.circuit_name }} has a failure rate of {{ $value | humanizePercentage }}"
+
+  - name: infrastructure_alerts
+    rules:
+      # Kafka alerts
+      - alert: KafkaConsumerLag
+        expr: kafka_consumer_lag > 1000
+        for: 2m
+        labels:
+          severity: warning
+          component: kafka
+        annotations:
+          summary: "High Kafka consumer lag"
+          description: "Consumer {{ $labels.consumer_group }} has lag of {{ $value }} messages on topic {{ $labels.topic }}"
+
+      - alert: KafkaPartitionOffline
+        expr: kafka_topic_partition_leader == -1
         for: 30s
         labels:
           severity: critical
-          service: cache
+          component: kafka
         annotations:
-          summary: "Redis cache is down"
-          description: "Redis cache connection is down for {{ $labels.instance }}"
+          summary: "Kafka partition offline"
+          description: "Partition {{ $labels.partition }} of topic {{ $labels.topic }} is offline"
 
-      # Kafka connection alert
-      - alert: KafkaConnectionDown
-        expr: up{job="kafka"} == 0
+      # Redis alerts
+      - alert: RedisHighMemoryUsage
+        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.9
+        for: 2m
+        labels:
+          severity: warning
+          component: redis
+        annotations:
+          summary: "High Redis memory usage"
+          description: "Redis instance is using {{ $value | humanizePercentage }} of available memory"
+
+      - alert: RedisConnectionFailure
+        expr: redis_connected_clients == 0
         for: 1m
         labels:
           severity: critical
-          service: streaming
+          component: redis
         annotations:
-          summary: "Kafka is down"
-          description: "Kafka connection is down for {{ $labels.instance }}"
+          summary: "Redis connection failure"
+          description: "No clients connected to Redis instance"
 
-      # API response time alert
-      - alert: HighAPIResponseTime
+      # PostgreSQL alerts
+      - alert: PostgreSQLHighConnections
+        expr: pg_stat_database_numbackends / pg_settings_max_connections > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          component: postgresql
+        annotations:
+          summary: "High PostgreSQL connections"
+          description: "PostgreSQL is using {{ $value | humanizePercentage }} of max connections"
+
+      - alert: PostgreSQLReplicationLag
+        expr: pg_replication_lag > 60
+        for: 1m
+        labels:
+          severity: warning
+          component: postgresql
+        annotations:
+          summary: "PostgreSQL replication lag"
+          description: "PostgreSQL replication lag is {{ $value }} seconds"
+
+      # MySQL alerts
+      - alert: MySQLHighConnections
+        expr: mysql_global_status_threads_connected / mysql_global_variables_max_connections > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          component: mysql
+        annotations:
+          summary: "High MySQL connections"
+          description: "MySQL is using {{ $value | humanizePercentage }} of max connections"
+
+      - alert: MySQLSlowQueries
+        expr: rate(mysql_global_status_slow_queries[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+          component: mysql
+        annotations:
+          summary: "High MySQL slow queries"
+          description: "MySQL has {{ $value }} slow queries per second"
+
+      # MongoDB alerts
+      - alert: MongoDBHighConnections
+        expr: mongodb_connections{state="current"} / mongodb_connections{state="available"} > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          component: mongodb
+        annotations:
+          summary: "High MongoDB connections"
+          description: "MongoDB is using {{ $value | humanizePercentage }} of available connections"
+
+      - alert: MongoDBReplicationLag
+        expr: mongodb_replset_member_replication_lag > 10
+        for: 1m
+        labels:
+          severity: warning
+          component: mongodb
+        annotations:
+          summary: "MongoDB replication lag"
+          description: "MongoDB replica set member has replication lag of {{ $value }} seconds"
+
+  - name: performance_alerts
+    rules:
+      # Throughput alerts
+      - alert: LowAuditThroughput
+        expr: rate(audit_write_tps[5m]) < 100
+        for: 5m
+        labels:
+          severity: warning
+          component: audit
+        annotations:
+          summary: "Low audit throughput"
+          description: "Audit write throughput is {{ $value }} TPS, below expected minimum of 100 TPS"
+
+      - alert: HighResponseTime
         expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
         for: 2m
         labels:
           severity: warning
-          service: api
+          component: api
         annotations:
           summary: "High API response time"
-          description: "95th percentile response time is {{ $value }}s for {{ $labels.instance }}"
+          description: "95th percentile response time is {{ $value }}s for {{ $labels.method }} {{ $labels.endpoint }}"
 
-      # Memory usage alert
-      - alert: HighMemoryUsage
-        expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes > 0.8
+      # Resource utilization alerts
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
         for: 5m
         labels:
           severity: warning
-          service: system
+          component: system
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}% on instance {{ $labels.instance }}"
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: system
         annotations:
           summary: "High memory usage"
-          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% on instance {{ $labels.instance }}"
 
-      # Disk usage alert
       - alert: HighDiskUsage
-        expr: (node_filesystem_size_bytes - node_filesystem_avail_bytes) / node_filesystem_size_bytes > 0.8
-        for: 5m
-        labels:
-          severity: warning
-          service: system
-        annotations:
-          summary: "High disk usage"
-          description: "Disk usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
-
-      # Audit integrity alert
-      - alert: AuditIntegrityFailure
-        expr: audit_integrity_check_failures_total > 0
-        for: 0s
-        labels:
-          severity: critical
-          service: audit
-        annotations:
-          summary: "Audit integrity check failed"
-          description: "{{ $value }} audit integrity check failures detected"
-
-      # CDC lag alert
-      - alert: CDCLagHigh
-        expr: cdc_lag_seconds > 60
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 85
         for: 2m
         labels:
           severity: warning
-          service: cdc
+          component: system
         annotations:
-          summary: "CDC lag is high"
-          description: "Change Data Capture lag is {{ $value }}s for {{ $labels.source_db }}"
+          summary: "High disk usage"
+          description: "Disk usage is {{ $value }}% on {{ $labels.mountpoint }} of instance {{ $labels.instance }}"
 
-      # Throughput drop alert
-      - alert: ThroughputDrop
-        expr: rate(audit_write_tps[5m]) < 100
-        for: 3m
-        labels:
-          severity: warning
-          service: audit
-        annotations:
-          summary: "Audit write throughput dropped"
-          description: "Audit write TPS is {{ $value }}, below expected threshold"
-
-  - name: admingriffe_business_alerts
+  - name: security_alerts
     rules:
-      # Failed transactions alert
-      - alert: HighFailedTransactions
-        expr: rate(failed_transactions_total[5m]) > 0.02
-        for: 3m
+      # Authentication alerts
+      - alert: HighFailedLogins
+        expr: rate(auth_failed_total[5m]) > 10
+        for: 2m
         labels:
           severity: warning
-          service: business
+          component: security
         annotations:
-          summary: "High failed transaction rate"
-          description: "Failed transaction rate is {{ $value | humanizePercentage }}"
+          summary: "High failed login attempts"
+          description: "{{ $value }} failed login attempts per second over the last 5 minutes"
 
-      # Compliance violation alert
-      - alert: ComplianceViolation
-        expr: compliance_violations_total > 0
-        for: 0s
+      - alert: SuspiciousActivity
+        expr: rate(audit_log_total{operation="DELETE"}[10m]) > 100
+        for: 1m
+        labels:
+          severity: warning
+          component: security
+        annotations:
+          summary: "Suspicious delete activity"
+          description: "High rate of delete operations: {{ $value }} per second"
+
+      # Data integrity alerts
+      - alert: AuditSignatureFailure
+        expr: rate(audit_signature_failures_total[5m]) > 0
+        for: 1m
         labels:
           severity: critical
-          service: compliance
+          component: security
         annotations:
-          summary: "Compliance violation detected"
-          description: "{{ $value }} compliance violations detected in the last period"
+          summary: "Audit signature verification failure"
+          description: "{{ $value }} audit records failed signature verification"
+
+  - name: compliance_alerts
+    rules:
+      # Compliance monitoring
+      - alert: AuditRetentionViolation
+        expr: audit_retention_days < 2555  # 7 years
+        for: 1m
+        labels:
+          severity: critical
+          component: compliance
+        annotations:
+          summary: "Audit retention policy violation"
+          description: "Audit data retention is {{ $value }} days, below required 7 years (2555 days)"
+
+      - alert: ComplianceExportFailure
+        expr: rate(compliance_export_failures_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: warning
+          component: compliance
+        annotations:
+          summary: "Compliance export failure"
+          description: "{{ $value }} compliance exports failed in the last hour"
