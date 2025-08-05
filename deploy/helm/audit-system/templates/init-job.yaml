@@ -1,0 +1,346 @@
+{{- if .Values.initJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "audit-system.fullname" . }}-init
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: {{ .Values.initJob.ttlSecondsAfterFinished | default 300 }}
+  backoffLimit: {{ .Values.initJob.backoffLimit | default 3 }}
+  template:
+    metadata:
+      labels:
+        {{- include "audit-system.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: init
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "audit-system.serviceAccountName" . }}
+      securityContext:
+        {{- include "audit-system.podSecurityContext" . | nindent 8 }}
+      initContainers:
+        # Wait for databases to be ready
+        - name: wait-for-postgresql
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until pg_isready -h {{ if .Values.postgresql.enabled }}{{ include "audit-system.fullname" . }}-postgresql{{ else }}{{ .Values.externalDatabase.postgresql.host }}{{ end }} -p {{ if .Values.postgresql.enabled }}5432{{ else }}{{ .Values.externalDatabase.postgresql.port }}{{ end }}; do
+                echo "Waiting for PostgreSQL..."
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+          securityContext:
+            {{- include "audit-system.securityContext" . | nindent 12 }}
+        - name: wait-for-mysql
+          image: mysql:8.0
+          command:
+            - sh
+            - -c
+            - |
+              until mysqladmin ping -h {{ if .Values.mysql.enabled }}{{ include "audit-system.fullname" . }}-mysql{{ else }}{{ .Values.externalDatabase.mysql.host }}{{ end }} -P {{ if .Values.mysql.enabled }}3306{{ else }}{{ .Values.externalDatabase.mysql.port }}{{ end }} --silent; do
+                echo "Waiting for MySQL..."
+                sleep 2
+              done
+              echo "MySQL is ready!"
+          securityContext:
+            {{- include "audit-system.securityContext" . | nindent 12 }}
+        - name: wait-for-mongodb
+          image: mongo:7
+          command:
+            - sh
+            - -c
+            - |
+              until mongosh --host {{ if .Values.mongodb.enabled }}{{ include "audit-system.fullname" . }}-mongodb{{ else }}{{ .Values.externalDatabase.mongodb.host }}{{ end }}:{{ if .Values.mongodb.enabled }}27017{{ else }}{{ .Values.externalDatabase.mongodb.port }}{{ end }} --eval "db.adminCommand('ping')" --quiet; do
+                echo "Waiting for MongoDB..."
+                sleep 2
+              done
+              echo "MongoDB is ready!"
+          securityContext:
+            {{- include "audit-system.securityContext" . | nindent 12 }}
+        - name: wait-for-redis
+          image: redis:7-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until redis-cli -h {{ if .Values.redis.enabled }}{{ include "audit-system.fullname" . }}-redis-master{{ else }}{{ .Values.externalCache.redis.host }}{{ end }} -p {{ if .Values.redis.enabled }}6379{{ else }}{{ .Values.externalCache.redis.port }}{{ end }} ping; do
+                echo "Waiting for Redis..."
+                sleep 2
+              done
+              echo "Redis is ready!"
+          securityContext:
+            {{- include "audit-system.securityContext" . | nindent 12 }}
+        - name: wait-for-kafka
+          image: confluentinc/cp-kafka:7.7.0
+          command:
+            - sh
+            - -c
+            - |
+              until kafka-broker-api-versions --bootstrap-server {{ include "audit-system.kafka.brokers" . }}; do
+                echo "Waiting for Kafka..."
+                sleep 2
+              done
+              echo "Kafka is ready!"
+          securityContext:
+            {{- include "audit-system.securityContext" . | nindent 12 }}
+      containers:
+        - name: init-audit-system
+          image: "{{ .Values.initJob.image.repository }}:{{ .Values.initJob.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.initJob.image.pullPolicy }}
+          securityContext:
+            {{- include "audit-system.securityContext" . | nindent 12 }}
+          env:
+            {{- include "audit-system.commonEnv" . | nindent 12 }}
+            {{- include "audit-system.databaseEnv" . | nindent 12 }}
+            {{- include "audit-system.messagingEnv" . | nindent 12 }}
+            - name: INIT_MODE
+              value: "full"
+            - name: CREATE_TOPICS
+              value: "true"
+            - name: CREATE_SCHEMAS
+              value: "true"
+            - name: CREATE_TRIGGERS
+              value: "true"
+            - name: CREATE_INDEXES
+              value: "true"
+            - name: SEED_DATA
+              value: {{ .Values.initJob.seedData | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "Starting audit system initialization..."
+              
+              # Create Kafka topics
+              if [ "$CREATE_TOPICS" = "true" ]; then
+                echo "Creating Kafka topics..."
+                kafka-topics --bootstrap-server $KAFKA_BROKERS --create --if-not-exists --topic audit-events --partitions 6 --replication-factor 1
+                kafka-topics --bootstrap-server $KAFKA_BROKERS --create --if-not-exists --topic sync-events --partitions 6 --replication-factor 1
+                kafka-topics --bootstrap-server $KAFKA_BROKERS --create --if-not-exists --topic conflict-events --partitions 3 --replication-factor 1
+                kafka-topics --bootstrap-server $KAFKA_BROKERS --create --if-not-exists --topic dead-letter-queue --partitions 3 --replication-factor 1
+                echo "Kafka topics created successfully!"
+              fi
+              
+              # Initialize PostgreSQL
+              if [ "$CREATE_SCHEMAS" = "true" ]; then
+                echo "Initializing PostgreSQL schemas..."
+                psql $POSTGRESQL_URL -f /scripts/postgresql-init.sql
+                echo "PostgreSQL schemas initialized!"
+              fi
+              
+              # Initialize MySQL
+              if [ "$CREATE_SCHEMAS" = "true" ]; then
+                echo "Initializing MySQL schemas..."
+                mysql --defaults-extra-file=/dev/stdin <<EOF < /scripts/mysql-init.sql
+              [client]
+              host=$(echo $MYSQL_URL | cut -d'@' -f2 | cut -d':' -f1)
+              port=$(echo $MYSQL_URL | cut -d':' -f4 | cut -d'/' -f1)
+              user=$(echo $MYSQL_URL | cut -d'/' -f3 | cut -d':' -f1)
+              password=$(echo $MYSQL_URL | cut -d':' -f3 | cut -d'@' -f1)
+              EOF
+                echo "MySQL schemas initialized!"
+              fi
+              
+              # Initialize MongoDB
+              if [ "$CREATE_SCHEMAS" = "true" ]; then
+                echo "Initializing MongoDB collections..."
+                mongosh $MONGODB_URL /scripts/mongodb-init.js
+                echo "MongoDB collections initialized!"
+              fi
+              
+              # Create indexes
+              if [ "$CREATE_INDEXES" = "true" ]; then
+                echo "Creating database indexes..."
+                # PostgreSQL indexes
+                psql $POSTGRESQL_URL -c "
+                  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_audit_log_executed_at ON audit.audit_log(executed_at);
+                  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_audit_log_table_name ON audit.audit_log(table_name);
+                  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_audit_log_operation ON audit.audit_log(operation);
+                  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sync_status_source_target ON audit.sync_status(source_db, target_db);
+                "
+                echo "Database indexes created!"
+              fi
+              
+              # Seed initial data
+              if [ "$SEED_DATA" = "true" ]; then
+                echo "Seeding initial data..."
+                # Add any initial data seeding here
+                echo "Initial data seeded!"
+              fi
+              
+              # Verify initialization
+              echo "Verifying initialization..."
+              
+              # Check PostgreSQL
+              psql $POSTGRESQL_URL -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'audit';"
+              
+              # Check MySQL
+              mysql --defaults-extra-file=/dev/stdin <<EOF -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'audit_mysql';"
+              [client]
+              host=$(echo $MYSQL_URL | cut -d'@' -f2 | cut -d':' -f1)
+              port=$(echo $MYSQL_URL | cut -d':' -f4 | cut -d'/' -f1)
+              user=$(echo $MYSQL_URL | cut -d'/' -f3 | cut -d':' -f1)
+              password=$(echo $MYSQL_URL | cut -d':' -f3 | cut -d'@' -f1)
+              EOF
+              
+              # Check MongoDB
+              mongosh $MONGODB_URL --eval "db.audit_log.countDocuments()"
+              
+              # Check Kafka topics
+              kafka-topics --bootstrap-server $KAFKA_BROKERS --list
+              
+              echo "Audit system initialization completed successfully!"
+          resources:
+            {{- toYaml .Values.initJob.resources | nindent 12 }}
+          volumeMounts:
+            {{- include "audit-system.volumeMounts" . | nindent 12 }}
+            - name: init-scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        {{- include "audit-system.volumes" . | nindent 8 }}
+        - name: init-scripts
+          configMap:
+            name: {{ include "audit-system.fullname" . }}-init-scripts
+            defaultMode: 0755
+      {{- with .Values.initJob.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.initJob.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+# ConfigMap with initialization scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "audit-system.fullname" . }}-init-scripts
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: init
+data:
+  postgresql-init.sql: |
+    -- PostgreSQL initialization script
+    CREATE SCHEMA IF NOT EXISTS audit;
+    CREATE SCHEMA IF NOT EXISTS business;
+    
+    -- Create audit tables
+    CREATE TABLE IF NOT EXISTS audit.audit_log (
+      id BIGSERIAL PRIMARY KEY,
+      db_engine TEXT NOT NULL,
+      schema_name TEXT,
+      table_name TEXT,
+      operation TEXT CHECK (operation IN ('INSERT','UPDATE','DELETE')),
+      primary_key JSONB,
+      diff_old JSONB,
+      diff_new JSONB,
+      executed_by TEXT,
+      client_ip INET,
+      executed_at TIMESTAMPTZ DEFAULT now(),
+      signature BYTEA
+    );
+    
+    -- Create sync tables
+    CREATE TABLE IF NOT EXISTS audit.sync_status (
+      id BIGSERIAL PRIMARY KEY,
+      source_db TEXT NOT NULL,
+      target_db TEXT NOT NULL,
+      last_sync_at TIMESTAMPTZ,
+      sync_lag_ms INTEGER,
+      status TEXT DEFAULT 'active',
+      error_count INTEGER DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT now(),
+      updated_at TIMESTAMPTZ DEFAULT now()
+    );
+    
+    -- Enable logical replication
+    SELECT pg_create_logical_replication_slot('audit_slot', 'wal2json', false, true);
+    CREATE PUBLICATION audit_publication FOR ALL TABLES;
+  
+  mysql-init.sql: |
+    -- MySQL initialization script
+    CREATE DATABASE IF NOT EXISTS audit_mysql;
+    USE audit_mysql;
+    
+    -- Create audit tables
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      db_engine VARCHAR(50) NOT NULL,
+      schema_name VARCHAR(100),
+      table_name VARCHAR(100),
+      operation ENUM('INSERT','UPDATE','DELETE'),
+      primary_key JSON,
+      diff_old JSON,
+      diff_new JSON,
+      executed_by VARCHAR(255),
+      client_ip VARCHAR(45),
+      executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      signature BLOB,
+      INDEX idx_executed_at (executed_at),
+      INDEX idx_table_name (table_name),
+      INDEX idx_operation (operation)
+    );
+    
+    -- Create sync tables
+    CREATE TABLE IF NOT EXISTS sync_status (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      source_db VARCHAR(100) NOT NULL,
+      target_db VARCHAR(100) NOT NULL,
+      last_sync_at TIMESTAMP NULL,
+      sync_lag_ms INT DEFAULT 0,
+      status VARCHAR(20) DEFAULT 'active',
+      error_count INT DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_source_target (source_db, target_db)
+    );
+  
+  mongodb-init.js: |
+    // MongoDB initialization script
+    use audit_mongo;
+    
+    // Create audit collection
+    db.createCollection("audit_log", {
+      validator: {
+        $jsonSchema: {
+          bsonType: "object",
+          required: ["db_engine", "operation", "executed_at"],
+          properties: {
+            db_engine: { bsonType: "string" },
+            schema_name: { bsonType: "string" },
+            table_name: { bsonType: "string" },
+            operation: { enum: ["INSERT", "UPDATE", "DELETE"] },
+            primary_key: { bsonType: "object" },
+            diff_old: { bsonType: "object" },
+            diff_new: { bsonType: "object" },
+            executed_by: { bsonType: "string" },
+            client_ip: { bsonType: "string" },
+            executed_at: { bsonType: "date" },
+            signature: { bsonType: "binData" }
+          }
+        }
+      }
+    });
+    
+    // Create indexes
+    db.audit_log.createIndex({ "executed_at": 1 });
+    db.audit_log.createIndex({ "table_name": 1 });
+    db.audit_log.createIndex({ "operation": 1 });
+    db.audit_log.createIndex({ "db_engine": 1, "table_name": 1 });
+    
+    // Create sync status collection
+    db.createCollection("sync_status");
+    db.sync_status.createIndex({ "source_db": 1, "target_db": 1 }, { unique: true });
+    
+    print("MongoDB initialization completed!");
+{{- end }}

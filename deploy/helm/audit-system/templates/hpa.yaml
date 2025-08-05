@@ -1,0 +1,302 @@
+{{- if .Values.apiGateway.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "audit-system.fullname" . }}-api-gateway
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "audit-system.fullname" . }}-api-gateway
+  minReplicas: {{ .Values.apiGateway.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.apiGateway.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.apiGateway.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.apiGateway.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.apiGateway.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.apiGateway.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.apiGateway.autoscaling.customMetrics }}
+    # Custom metric: API response time
+    - type: Pods
+      pods:
+        metric:
+          name: audit_system_api_response_time_p95
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.apiGateway.autoscaling.customMetrics.responseTimeThreshold | default "200m" }}
+    # Custom metric: Request rate
+    - type: Pods
+      pods:
+        metric:
+          name: audit_system_request_rate
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.apiGateway.autoscaling.customMetrics.requestRateThreshold | default "100" }}
+    # Custom metric: Error rate
+    - type: Pods
+      pods:
+        metric:
+          name: audit_system_error_rate_percentage
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.apiGateway.autoscaling.customMetrics.errorRateThreshold | default "5" }}
+    {{- end }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: {{ .Values.apiGateway.autoscaling.behavior.scaleDown.stabilizationWindowSeconds | default 300 }}
+      policies:
+        - type: Percent
+          value: {{ .Values.apiGateway.autoscaling.behavior.scaleDown.percentPolicy | default 10 }}
+          periodSeconds: {{ .Values.apiGateway.autoscaling.behavior.scaleDown.periodSeconds | default 60 }}
+        - type: Pods
+          value: {{ .Values.apiGateway.autoscaling.behavior.scaleDown.podsPolicy | default 2 }}
+          periodSeconds: {{ .Values.apiGateway.autoscaling.behavior.scaleDown.periodSeconds | default 60 }}
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: {{ .Values.apiGateway.autoscaling.behavior.scaleUp.stabilizationWindowSeconds | default 60 }}
+      policies:
+        - type: Percent
+          value: {{ .Values.apiGateway.autoscaling.behavior.scaleUp.percentPolicy | default 50 }}
+          periodSeconds: {{ .Values.apiGateway.autoscaling.behavior.scaleUp.periodSeconds | default 60 }}
+        - type: Pods
+          value: {{ .Values.apiGateway.autoscaling.behavior.scaleUp.podsPolicy | default 4 }}
+          periodSeconds: {{ .Values.apiGateway.autoscaling.behavior.scaleUp.periodSeconds | default 60 }}
+      selectPolicy: Max
+---
+{{- end }}
+{{- if .Values.syncWorker.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "audit-system.fullname" . }}-sync-worker
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "audit-system.fullname" . }}-sync-worker
+  minReplicas: {{ .Values.syncWorker.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.syncWorker.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.syncWorker.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.syncWorker.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.syncWorker.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.syncWorker.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.syncWorker.autoscaling.customMetrics }}
+    # Custom metric: Sync lag
+    - type: Pods
+      pods:
+        metric:
+          name: audit_system_sync_lag_ms_avg
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.syncWorker.autoscaling.customMetrics.syncLagThreshold | default "100" }}
+    # Custom metric: Queue depth
+    - type: Pods
+      pods:
+        metric:
+          name: audit_system_queue_depth_by_type
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.syncWorker.autoscaling.customMetrics.queueDepthThreshold | default "1000" }}
+    # Custom metric: Conflict rate
+    - type: Pods
+      pods:
+        metric:
+          name: audit_system_conflict_rate_percentage
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.syncWorker.autoscaling.customMetrics.conflictRateThreshold | default "5" }}
+    # Custom metric: Throughput
+    - type: Pods
+      pods:
+        metric:
+          name: audit_system_throughput_sync_operations_per_second
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.syncWorker.autoscaling.customMetrics.throughputThreshold | default "100" }}
+    {{- end }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: {{ .Values.syncWorker.autoscaling.behavior.scaleDown.stabilizationWindowSeconds | default 600 }}
+      policies:
+        - type: Percent
+          value: {{ .Values.syncWorker.autoscaling.behavior.scaleDown.percentPolicy | default 10 }}
+          periodSeconds: {{ .Values.syncWorker.autoscaling.behavior.scaleDown.periodSeconds | default 120 }}
+        - type: Pods
+          value: {{ .Values.syncWorker.autoscaling.behavior.scaleDown.podsPolicy | default 1 }}
+          periodSeconds: {{ .Values.syncWorker.autoscaling.behavior.scaleDown.periodSeconds | default 120 }}
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: {{ .Values.syncWorker.autoscaling.behavior.scaleUp.stabilizationWindowSeconds | default 120 }}
+      policies:
+        - type: Percent
+          value: {{ .Values.syncWorker.autoscaling.behavior.scaleUp.percentPolicy | default 100 }}
+          periodSeconds: {{ .Values.syncWorker.autoscaling.behavior.scaleUp.periodSeconds | default 60 }}
+        - type: Pods
+          value: {{ .Values.syncWorker.autoscaling.behavior.scaleUp.podsPolicy | default 2 }}
+          periodSeconds: {{ .Values.syncWorker.autoscaling.behavior.scaleUp.periodSeconds | default 60 }}
+      selectPolicy: Max
+---
+{{- end }}
+{{- if .Values.monitoring.prometheus.enabled }}
+# VerticalPodAutoscaler for resource optimization
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: {{ include "audit-system.fullname" . }}-api-gateway-vpa
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "audit-system.fullname" . }}-api-gateway
+  updatePolicy:
+    updateMode: {{ .Values.apiGateway.vpa.updateMode | default "Off" }}
+  resourcePolicy:
+    containerPolicies:
+      - containerName: api-gateway
+        minAllowed:
+          cpu: {{ .Values.apiGateway.vpa.minAllowed.cpu | default "100m" }}
+          memory: {{ .Values.apiGateway.vpa.minAllowed.memory | default "128Mi" }}
+        maxAllowed:
+          cpu: {{ .Values.apiGateway.vpa.maxAllowed.cpu | default "2" }}
+          memory: {{ .Values.apiGateway.vpa.maxAllowed.memory | default "4Gi" }}
+        controlledResources: ["cpu", "memory"]
+        controlledValues: RequestsAndLimits
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: {{ include "audit-system.fullname" . }}-sync-worker-vpa
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync-worker
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "audit-system.fullname" . }}-sync-worker
+  updatePolicy:
+    updateMode: {{ .Values.syncWorker.vpa.updateMode | default "Off" }}
+  resourcePolicy:
+    containerPolicies:
+      - containerName: sync-worker
+        minAllowed:
+          cpu: {{ .Values.syncWorker.vpa.minAllowed.cpu | default "200m" }}
+          memory: {{ .Values.syncWorker.vpa.minAllowed.memory | default "256Mi" }}
+        maxAllowed:
+          cpu: {{ .Values.syncWorker.vpa.maxAllowed.cpu | default "4" }}
+          memory: {{ .Values.syncWorker.vpa.maxAllowed.memory | default "8Gi" }}
+        controlledResources: ["cpu", "memory"]
+        controlledValues: RequestsAndLimits
+---
+# Custom Resource for Predictive Scaling
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "audit-system.fullname" . }}-scaling-config
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scaling
+data:
+  scaling-rules.yaml: |
+    # Predictive scaling configuration
+    predictiveScaling:
+      enabled: {{ .Values.scaling.predictive.enabled | default false }}
+      
+      # Time-based scaling patterns
+      timeBasedRules:
+        - name: business-hours
+          schedule: "0 8 * * 1-5"  # 8 AM Monday-Friday
+          minReplicas: {{ .Values.scaling.predictive.businessHours.minReplicas | default 3 }}
+          maxReplicas: {{ .Values.scaling.predictive.businessHours.maxReplicas | default 10 }}
+          duration: "10h"  # Until 6 PM
+        
+        - name: off-hours
+          schedule: "0 18 * * 1-5"  # 6 PM Monday-Friday
+          minReplicas: {{ .Values.scaling.predictive.offHours.minReplicas | default 1 }}
+          maxReplicas: {{ .Values.scaling.predictive.offHours.maxReplicas | default 5 }}
+          duration: "14h"  # Until 8 AM next day
+        
+        - name: weekend
+          schedule: "0 0 * * 6"  # Saturday midnight
+          minReplicas: {{ .Values.scaling.predictive.weekend.minReplicas | default 1 }}
+          maxReplicas: {{ .Values.scaling.predictive.weekend.maxReplicas | default 3 }}
+          duration: "48h"  # Entire weekend
+      
+      # Load-based scaling patterns
+      loadBasedRules:
+        - name: high-load-pattern
+          trigger:
+            metric: audit_system_throughput_operations_per_second
+            threshold: {{ .Values.scaling.predictive.highLoad.threshold | default 5000 }}
+            duration: "5m"
+          action:
+            scaleUp:
+              replicas: {{ .Values.scaling.predictive.highLoad.scaleUp | default 2 }}
+              cooldown: "10m"
+        
+        - name: sync-lag-pattern
+          trigger:
+            metric: audit_system_sync_lag_ms_max
+            threshold: {{ .Values.scaling.predictive.syncLag.threshold | default 500 }}
+            duration: "2m"
+          action:
+            scaleUp:
+              replicas: {{ .Values.scaling.predictive.syncLag.scaleUp | default 1 }}
+              cooldown: "5m"
+        
+        - name: queue-depth-pattern
+          trigger:
+            metric: audit_system_queue_depth_by_type
+            threshold: {{ .Values.scaling.predictive.queueDepth.threshold | default 2000 }}
+            duration: "3m"
+          action:
+            scaleUp:
+              replicas: {{ .Values.scaling.predictive.queueDepth.scaleUp | default 2 }}
+              cooldown: "8m"
+      
+      # Machine learning based scaling
+      mlBasedScaling:
+        enabled: {{ .Values.scaling.ml.enabled | default false }}
+        model: {{ .Values.scaling.ml.model | default "linear-regression" }}
+        features:
+          - audit_system_throughput_operations_per_second
+          - audit_system_sync_lag_ms_avg
+          - audit_system_queue_depth_by_type
+          - audit_system_error_rate_percentage
+        predictionWindow: {{ .Values.scaling.ml.predictionWindow | default "15m" }}
+        confidenceThreshold: {{ .Values.scaling.ml.confidenceThreshold | default 0.8 }}
+{{- end }}

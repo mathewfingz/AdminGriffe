@@ -114,7 +114,7 @@ BCRYPT_ROUNDS=12
 LOG_LEVEL="info"
 LOG_FORMAT="json"
 EOF
-    fi
+    }
     print_success "Environment file configured"
 else
     print_warning ".env file already exists. Skipping creation."

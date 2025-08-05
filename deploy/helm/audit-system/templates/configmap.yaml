@@ -1,0 +1,143 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "audit-system.fullname" . }}-config
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+data:
+  # Kafka Configuration
+  kafka-brokers: {{ include "audit-system.kafka.brokers" . | quote }}
+  kafka-topics: |
+    audit-events
+    sync-events
+    conflict-events
+    dead-letter-queue
+  
+  # Database Configuration
+  postgresql-host: {{ if .Values.postgresql.enabled }}{{ include "audit-system.fullname" . }}-postgresql{{ else }}{{ .Values.externalDatabase.postgresql.host }}{{ end }}
+  postgresql-port: {{ if .Values.postgresql.enabled }}"5432"{{ else }}{{ .Values.externalDatabase.postgresql.port | quote }}{{ end }}
+  postgresql-database: {{ if .Values.postgresql.enabled }}{{ .Values.postgresql.auth.database }}{{ else }}{{ .Values.externalDatabase.postgresql.database }}{{ end }}
+  
+  mysql-host: {{ if .Values.mysql.enabled }}{{ include "audit-system.fullname" . }}-mysql{{ else }}{{ .Values.externalDatabase.mysql.host }}{{ end }}
+  mysql-port: {{ if .Values.mysql.enabled }}"3306"{{ else }}{{ .Values.externalDatabase.mysql.port | quote }}{{ end }}
+  mysql-database: {{ if .Values.mysql.enabled }}{{ .Values.mysql.auth.database }}{{ else }}{{ .Values.externalDatabase.mysql.database }}{{ end }}
+  
+  mongodb-host: {{ if .Values.mongodb.enabled }}{{ include "audit-system.fullname" . }}-mongodb{{ else }}{{ .Values.externalDatabase.mongodb.host }}{{ end }}
+  mongodb-port: {{ if .Values.mongodb.enabled }}"27017"{{ else }}{{ .Values.externalDatabase.mongodb.port | quote }}{{ end }}
+  mongodb-database: {{ if .Values.mongodb.enabled }}{{ .Values.mongodb.auth.database }}{{ else }}{{ .Values.externalDatabase.mongodb.database }}{{ end }}
+  
+  # Redis Configuration
+  redis-host: {{ if .Values.redis.enabled }}{{ include "audit-system.fullname" . }}-redis-master{{ else }}{{ .Values.externalCache.redis.host }}{{ end }}
+  redis-port: {{ if .Values.redis.enabled }}"6379"{{ else }}{{ .Values.externalCache.redis.port | quote }}{{ end }}
+  
+  # Application Configuration
+  log-level: {{ .Values.global.logLevel | default "info" | quote }}
+  metrics-enabled: "true"
+  tracing-enabled: {{ .Values.monitoring.tracing.enabled | quote }}
+  
+  # Sync Configuration
+  sync-batch-size: {{ .Values.syncWorker.config.batchSize | quote }}
+  sync-timeout-ms: {{ .Values.syncWorker.config.timeoutMs | quote }}
+  conflict-resolution-strategy: {{ .Values.syncWorker.config.conflictResolution | quote }}
+  max-retry-attempts: {{ .Values.syncWorker.config.maxRetryAttempts | quote }}
+  
+  # Security Configuration
+  encryption-at-rest: {{ .Values.security.encryptionAtRest | quote }}
+  audit-signature-enabled: {{ .Values.security.auditSignature.enabled | quote }}
+  
+  # Compliance Configuration
+  retention-days: {{ .Values.compliance.retentionDays | quote }}
+  export-format: {{ .Values.compliance.exportFormat | quote }}
+  
+  # Circuit Breaker Configuration
+  circuit-breaker-enabled: "true"
+  circuit-breaker-failure-threshold: "5"
+  circuit-breaker-timeout-ms: "60000"
+  circuit-breaker-reset-timeout-ms: "30000"
+  
+  # Rate Limiting Configuration
+  rate-limit-enabled: "true"
+  rate-limit-requests-per-minute: "1000"
+  rate-limit-burst-size: "100"
+  
+  # Health Check Configuration
+  health-check-interval-ms: "30000"
+  health-check-timeout-ms: "5000"
+  
+  # Prometheus Configuration
+  prometheus-metrics-path: "/metrics"
+  prometheus-metrics-port: "9090"
+  
+  # Jaeger Configuration
+  {{- if .Values.monitoring.tracing.enabled }}
+  jaeger-endpoint: {{ .Values.monitoring.tracing.jaeger.endpoint | quote }}
+  jaeger-service-name: "audit-system"
+  {{- end }}
+  
+  # Application Specific
+  api-gateway-config: |
+    cors:
+      enabled: true
+      origins: ["*"]
+      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+      headers: ["Content-Type", "Authorization"]
+    swagger:
+      enabled: true
+      path: "/api/docs"
+    websocket:
+      enabled: true
+      path: "/ws"
+      heartbeat: 30000
+  
+  sync-worker-config: |
+    consumers:
+      audit-events:
+        groupId: "audit-sync-workers"
+        autoCommit: false
+        batchSize: {{ .Values.syncWorker.config.batchSize }}
+      sync-events:
+        groupId: "sync-processors"
+        autoCommit: false
+        batchSize: {{ .Values.syncWorker.config.batchSize }}
+    producers:
+      retries: 3
+      acks: "all"
+      compression: "gzip"
+    deadLetterQueue:
+      enabled: {{ .Values.syncWorker.config.deadLetterQueue.enabled }}
+      topic: "dead-letter-queue"
+      maxRetries: {{ .Values.syncWorker.config.maxRetryAttempts }}
+  
+  # Database Specific Configurations
+  postgresql-config: |
+    pool:
+      min: 2
+      max: 10
+      idleTimeoutMillis: 30000
+    ssl: {{ .Values.postgresql.tls.enabled | default false }}
+    logicalReplication:
+      enabled: true
+      slotName: "audit_slot"
+      publicationName: "audit_publication"
+  
+  mysql-config: |
+    pool:
+      min: 2
+      max: 10
+      idleTimeout: 30000
+    ssl: {{ .Values.mysql.tls.enabled | default false }}
+    binlog:
+      enabled: true
+      format: "ROW"
+      serverId: 1
+  
+  mongodb-config: |
+    pool:
+      min: 2
+      max: 10
+      maxIdleTimeMS: 30000
+    ssl: {{ .Values.mongodb.tls.enabled | default false }}
+    changeStreams:
+      enabled: true
+      fullDocument: "updateLookup"
+      resumeAfter: null

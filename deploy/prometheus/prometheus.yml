@@ -1,65 +1,142 @@
+# Prometheus Configuration for Audit System
+# AdminGriffe - Sistema de Auditoría Integral
+
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  external_labels:
+    cluster: 'audit-system'
+    environment: 'development'
 
-rule_files:
-  - "alert_rules.yml"
-
+# Alertmanager configuration
 alerting:
   alertmanagers:
     - static_configs:
         - targets:
-          # - alertmanager:9093
+          - alertmanager:9093
 
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  - "alert_rules.yml"
+  - "recording_rules.yml"
+
+# A scrape configuration containing exactly one endpoint to scrape:
 scrape_configs:
+  # API Gateway metrics
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    honor_labels: true
+    params:
+      format: ['prometheus']
+
+  # Sync Worker metrics
+  - job_name: 'sync-worker'
+    static_configs:
+      - targets: ['sync-worker:3001']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+    scrape_timeout: 5s
+
+  # PostgreSQL metrics
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # MySQL metrics
+  - job_name: 'mysql'
+    static_configs:
+      - targets: ['mysql-exporter:9104']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # MongoDB metrics
+  - job_name: 'mongodb'
+    static_configs:
+      - targets: ['mongodb-exporter:9216']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # Redis metrics
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # Kafka metrics
+  - job_name: 'kafka'
+    static_configs:
+      - targets: ['kafka-exporter:9308']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # RabbitMQ metrics
+  - job_name: 'rabbitmq'
+    static_configs:
+      - targets: ['rabbitmq:15692']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
+  # cAdvisor for container metrics
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+
   # Prometheus itself
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
-
-  # AdminGriffe API
-  - job_name: 'admingriffe-api'
-    static_configs:
-      - targets: ['api:4000']
-    metrics_path: '/api/v1/metrics'
-    scrape_interval: 10s
-    scrape_timeout: 5s
-
-  # PostgreSQL Exporter
-  - job_name: 'postgres'
-    static_configs:
-      - targets: ['postgres-exporter:9187']
-
-  # Redis Exporter
-  - job_name: 'redis'
-    static_configs:
-      - targets: ['redis-exporter:9121']
-
-  # RabbitMQ
-  - job_name: 'rabbitmq'
-    static_configs:
-      - targets: ['rabbitmq:15692']
-
-  # Kafka JMX Metrics
-  - job_name: 'kafka'
-    static_configs:
-      - targets: ['kafka:9101']
-
-  # Node Exporter (if available)
-  - job_name: 'node'
-    static_configs:
-      - targets: ['node-exporter:9100']
-
-  # Custom audit metrics
-  - job_name: 'audit-metrics'
-    static_configs:
-      - targets: ['api:4000']
-    metrics_path: '/api/v1/audit/metrics'
     scrape_interval: 30s
 
-  # Sync metrics
-  - job_name: 'sync-metrics'
+  # Grafana metrics
+  - job_name: 'grafana'
     static_configs:
-      - targets: ['api:4000']
-    metrics_path: '/api/v1/sync/metrics'
-    scrape_interval: 10s
+      - targets: ['grafana:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Jaeger metrics
+  - job_name: 'jaeger'
+    static_configs:
+      - targets: ['jaeger:14269']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Custom application metrics with service discovery
+  - job_name: 'audit-services'
+    consul_sd_configs:
+      - server: 'consul:8500'
+        services: ['audit-api', 'sync-worker']
+    relabel_configs:
+      - source_labels: [__meta_consul_service]
+        target_label: service
+      - source_labels: [__meta_consul_node]
+        target_label: node
+
+# Remote write configuration for long-term storage (optional)
+# remote_write:
+#   - url: "http://cortex:9009/api/prom/push"
+#     queue_config:
+#       max_samples_per_send: 1000
+#       max_shards: 200
+#       capacity: 2500
+
+# Remote read configuration (optional)
+# remote_read:
+#   - url: "http://cortex:9009/api/prom/read"

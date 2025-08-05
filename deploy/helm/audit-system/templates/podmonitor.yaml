@@ -1,0 +1,278 @@
+{{- if .Values.monitoring.prometheus.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "audit-system.fullname" . }}-api-gateway
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api-gateway
+spec:
+  selector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api-gateway
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.prometheus.scrapeInterval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.prometheus.scrapeTimeout | default "10s" }}
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: 'audit_.*'
+          targetLabel: __tmp_audit_metric
+          replacement: 'true'
+        - sourceLabels: [__tmp_audit_metric]
+          regex: 'true'
+          targetLabel: service
+          replacement: 'audit-system'
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: instance
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+          targetLabel: component
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - sourceLabels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          targetLabel: __metrics_path__
+          regex: (.+)
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "audit-system.fullname" . }}-sync-worker
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sync-worker
+spec:
+  selector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: sync-worker
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.prometheus.scrapeInterval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.prometheus.scrapeTimeout | default "10s" }}
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: 'sync_.*|queue_.*|conflict_.*'
+          targetLabel: __tmp_sync_metric
+          replacement: 'true'
+        - sourceLabels: [__tmp_sync_metric]
+          regex: 'true'
+          targetLabel: service
+          replacement: 'audit-system'
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: instance
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_pod_label_app_kubernetes_io_component]
+          targetLabel: component
+        - sourceLabels: [__meta_kubernetes_pod_label_worker_type]
+          targetLabel: worker_type
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - sourceLabels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          targetLabel: __metrics_path__
+          regex: (.+)
+---
+# Custom metrics for HPA
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "audit-system.fullname" . }}-custom-metrics
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custom-metrics
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: metrics
+      protocol: TCP
+      name: metrics
+  selector:
+    {{- include "audit-system.selectorLabels" . | nindent 4 }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "audit-system.fullname" . }}-custom-metrics
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: custom-metrics
+spec:
+  selector:
+    matchLabels:
+      {{- include "audit-system.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: custom-metrics
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.monitoring.prometheus.scrapeInterval | default "15s" }}
+      scrapeTimeout: {{ .Values.monitoring.prometheus.scrapeTimeout | default "10s" }}
+      metricRelabelings:
+        # Relabel sync lag metric for HPA
+        - sourceLabels: [__name__]
+          regex: 'sync_lag_ms'
+          targetLabel: __tmp_hpa_metric
+          replacement: 'true'
+        - sourceLabels: [__tmp_hpa_metric]
+          regex: 'true'
+          targetLabel: hpa_metric
+          replacement: 'sync_lag_ms'
+        # Relabel queue depth metric for HPA
+        - sourceLabels: [__name__]
+          regex: 'queue_depth'
+          targetLabel: __tmp_hpa_metric
+          replacement: 'true'
+        - sourceLabels: [__tmp_hpa_metric]
+          regex: 'true'
+          targetLabel: hpa_metric
+          replacement: 'queue_depth'
+        # Add service labels
+        - sourceLabels: [__meta_kubernetes_service_name]
+          targetLabel: service
+        - sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: namespace
+        - sourceLabels: [__meta_kubernetes_pod_name]
+          targetLabel: pod
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+---
+# PrometheusRule for custom recording rules
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "audit-system.fullname" . }}-recording-rules
+  labels:
+    {{- include "audit-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitoring
+spec:
+  groups:
+    - name: audit-system.recording.rules
+      interval: 30s
+      rules:
+        # Average sync lag across all workers
+        - record: audit_system:sync_lag_ms:avg
+          expr: avg(sync_lag_ms{service="audit-system"})
+        
+        # Maximum sync lag across all workers
+        - record: audit_system:sync_lag_ms:max
+          expr: max(sync_lag_ms{service="audit-system"})
+        
+        # Total audit write TPS
+        - record: audit_system:audit_write_tps:sum
+          expr: sum(rate(audit_write_total{service="audit-system"}[5m]))
+        
+        # Error rate percentage
+        - record: audit_system:error_rate:percentage
+          expr: |
+            (
+              sum(rate(audit_errors_total{service="audit-system"}[5m])) /
+              sum(rate(audit_operations_total{service="audit-system"}[5m]))
+            ) * 100
+        
+        # Queue depth by queue type
+        - record: audit_system:queue_depth:by_type
+          expr: sum(queue_depth{service="audit-system"}) by (queue_type)
+        
+        # Conflict resolution rate
+        - record: audit_system:conflict_rate:percentage
+          expr: |
+            (
+              sum(rate(conflict_detected_total{service="audit-system"}[5m])) /
+              sum(rate(sync_operations_total{service="audit-system"}[5m]))
+            ) * 100
+        
+        # Database connection health
+        - record: audit_system:db_connections:health
+          expr: |
+            (
+              sum(db_connections_active{service="audit-system"}) /
+              sum(db_connections_max{service="audit-system"})
+            ) * 100
+        
+        # API response time 95th percentile
+        - record: audit_system:api_response_time:p95
+          expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{service="audit-system"}[5m])) by (le))
+        
+        # Circuit breaker open percentage
+        - record: audit_system:circuit_breaker:open_percentage
+          expr: |
+            (
+              sum(circuit_breaker_state{state="open",service="audit-system"}) /
+              sum(circuit_breaker_state{service="audit-system"})
+            ) * 100
+        
+        # Kafka consumer lag
+        - record: audit_system:kafka_consumer_lag:max
+          expr: max(kafka_consumer_lag{service="audit-system"}) by (topic, partition)
+        
+        # Redis memory usage percentage
+        - record: audit_system:redis_memory:usage_percentage
+          expr: |
+            (
+              redis_memory_used_bytes{service="audit-system"} /
+              redis_memory_max_bytes{service="audit-system"}
+            ) * 100
+        
+        # System resource utilization
+        - record: audit_system:cpu_utilization:percentage
+          expr: |
+            (
+              sum(rate(container_cpu_usage_seconds_total{pod=~".*audit-system.*"}[5m])) /
+              sum(container_spec_cpu_quota{pod=~".*audit-system.*"} / container_spec_cpu_period{pod=~".*audit-system.*"})
+            ) * 100
+        
+        - record: audit_system:memory_utilization:percentage
+          expr: |
+            (
+              sum(container_memory_working_set_bytes{pod=~".*audit-system.*"}) /
+              sum(container_spec_memory_limit_bytes{pod=~".*audit-system.*"})
+            ) * 100
+        
+        # Throughput metrics
+        - record: audit_system:throughput:operations_per_second
+          expr: sum(rate(audit_operations_total{service="audit-system"}[1m]))
+        
+        - record: audit_system:throughput:sync_operations_per_second
+          expr: sum(rate(sync_operations_total{service="audit-system"}[1m]))
+        
+        # Availability metrics
+        - record: audit_system:availability:percentage
+          expr: |
+            (
+              sum(up{service="audit-system"}) /
+              count(up{service="audit-system"})
+            ) * 100
+        
+        # Security metrics
+        - record: audit_system:failed_logins:rate
+          expr: sum(rate(auth_failed_total{service="audit-system"}[5m]))
+        
+        - record: audit_system:suspicious_activity:rate
+          expr: sum(rate(security_suspicious_activity_total{service="audit-system"}[5m]))
+        
+        # Compliance metrics
+        - record: audit_system:audit_signature_failures:rate
+          expr: sum(rate(audit_signature_verification_failed_total{service="audit-system"}[5m]))
+        
+        - record: audit_system:retention_violations:count
+          expr: sum(audit_retention_violations_total{service="audit-system"})
+{{- end }}
