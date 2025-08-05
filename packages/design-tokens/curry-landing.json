@@ -1,0 +1,30 @@
+{
+  "name": "curry-landing",
+  "description": "Design tokens for mobile login interface",
+  "colors": {
+    "background": "#FFFFFF",
+    "primary": "#1570EF",
+    "primary-light": "#D1E9FF",
+    "foreground-high": "#101828",
+    "foreground-default": "#344054",
+    "foreground-low": "#98A2B3",
+    "outline": "#D0D5DD",
+    "surface": "#FCFCFD"
+  },
+  "typography": {
+    "fontFamily": "Poppins",
+    "weights": [400, 600, 700]
+  },
+  "spacing": {
+    "container": "2rem",
+    "form": "1.5rem",
+    "component": "1rem"
+  },
+  "borderRadius": {
+    "base": "0.5rem",
+    "special": "20px"
+  },
+  "shadows": {
+    "card": "40px 40px 60px 0 rgba(228, 230, 234, 0.74)"
+  }
+}

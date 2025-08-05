@@ -1,0 +1,28 @@
+{
+  "name": "nova-haven",
+  "description": "Design tokens for admin dashboard",
+  "colors": {
+    "background": "hsl(0 0% 100%)",
+    "foreground": "hsl(222.2 84% 4.9%)",
+    "primary": "hsl(221.2 83.2% 53.3%)",
+    "primary-foreground": "hsl(210 40% 98%)",
+    "sidebar-background": "#EBEBEB",
+    "sidebar-foreground": "hsl(222.2 84% 4.9%)",
+    "sidebar-active": "#FAFAFA",
+    "muted": "hsl(210 40% 96%)",
+    "muted-foreground": "hsl(215.4 16.3% 46.9%)",
+    "border": "hsl(214.3 31.8% 91.4%)"
+  },
+  "typography": {
+    "fontFamily": "Manrope",
+    "weights": [200, 300, 400, 500, 600, 700, 800]
+  },
+  "spacing": {
+    "container": "2rem",
+    "sidebar": "16rem",
+    "content": "1.5rem"
+  },
+  "borderRadius": {
+    "base": "0.5rem"
+  }
+}

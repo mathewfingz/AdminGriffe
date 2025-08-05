@@ -1,0 +1,27 @@
+{
+  "name": "pixel-verse",
+  "description": "Design tokens for desktop login interface",
+  "colors": {
+    "navy": "#050A24",
+    "blue": "#1570EF",
+    "blue-light": "#D1E9FF",
+    "white": "#FCFCFD",
+    "gray-high": "#101828",
+    "gray-default": "#344054",
+    "gray-low": "#98A2B3",
+    "border": "#D0D5DD"
+  },
+  "typography": {
+    "fontFamily": "Poppins",
+    "weights": [100, 200, 300, 400, 500, 600, 700, 800, 900]
+  },
+  "spacing": {
+    "container": "2rem",
+    "form": "1.5rem",
+    "component": "1rem"
+  },
+  "borderRadius": {
+    "base": "0.5rem",
+    "large": "1rem"
+  }
+}

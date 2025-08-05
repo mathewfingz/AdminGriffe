@@ -1,0 +1,28 @@
+{
+  "name": "nova-works",
+  "description": "Design tokens for store dashboard",
+  "colors": {
+    "dashboard-bg": "#F9F9F9",
+    "dashboard-card": "#FFFFFF",
+    "dashboard-text": "#1C1C1C",
+    "dashboard-text-muted": "#474747",
+    "dashboard-border": "#D9D9D9",
+    "dashboard-success": "#0F5132",
+    "dashboard-danger": "#842029",
+    "primary": "hsl(221.2 83.2% 53.3%)",
+    "sidebar-background": "hsl(0 0% 98%)",
+    "sidebar-foreground": "hsl(222.2 84% 4.9%)"
+  },
+  "typography": {
+    "fontFamily": "system-ui, sans-serif",
+    "weights": [400, 500, 600, 700]
+  },
+  "spacing": {
+    "container": "2rem",
+    "dashboard": "1.5rem",
+    "card": "1rem"
+  },
+  "borderRadius": {
+    "base": "0.5rem"
+  }
+}
