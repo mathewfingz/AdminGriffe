@@ -1,5 +1,4 @@
 {
-  "name": "admin-griffe-nova-works",
   "version": 2,
   "framework": "vite",
   "buildCommand": "npm run build:client",
