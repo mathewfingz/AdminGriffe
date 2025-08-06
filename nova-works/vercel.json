@@ -1,10 +1,10 @@
 {
   "version": 2,
   "framework": "vite",
-  "buildCommand": "vite build",
-  "devCommand": "npm run dev",
+  "buildCommand": "npm run build:client",
+  "devCommand": "vite --port $PORT",
   "installCommand": "npm install",
-  "outputDirectory": "dist",
+  "outputDirectory": "dist/spa",
   "env": {
     "NODE_ENV": "production"
   },
