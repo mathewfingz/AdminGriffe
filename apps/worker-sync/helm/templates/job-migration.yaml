@@ -1,0 +1,481 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-migration-{{ .Values.migration.version | default "v1" }}
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit | default 3 }}
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds | default 1800 }}
+  template:
+    metadata:
+      labels:
+        {{- include "worker-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        # Wait for databases to be ready
+        - name: wait-for-databases
+          image: busybox:1.35
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for databases to be ready..."
+              
+              {{- if .Values.postgresql.enabled }}
+              echo "Checking PostgreSQL..."
+              until nc -z {{ .Values.postgresql.host }} {{ .Values.postgresql.port }}; do
+                echo "PostgreSQL is unavailable - sleeping"
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+              {{- end }}
+              
+              {{- if .Values.mysql.enabled }}
+              echo "Checking MySQL..."
+              until nc -z {{ .Values.mysql.host }} {{ .Values.mysql.port }}; do
+                echo "MySQL is unavailable - sleeping"
+                sleep 2
+              done
+              echo "MySQL is ready!"
+              {{- end }}
+              
+              {{- if .Values.mongodb.enabled }}
+              echo "Checking MongoDB..."
+              until nc -z {{ .Values.mongodb.host }} {{ .Values.mongodb.port }}; do
+                echo "MongoDB is unavailable - sleeping"
+                sleep 2
+              done
+              echo "MongoDB is ready!"
+              {{- end }}
+              
+              echo "All databases are ready!"
+      containers:
+        - name: migration
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting database migration..."
+              
+              # PostgreSQL Migrations
+              {{- if .Values.postgresql.enabled }}
+              echo "Running PostgreSQL migrations..."
+              
+              # Create migration tracking table
+              PGPASSWORD=$POSTGRES_PASSWORD psql -h {{ .Values.postgresql.host }} -p {{ .Values.postgresql.port }} -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }} << 'EOF'
+              -- Create migration tracking table
+              CREATE TABLE IF NOT EXISTS public.schema_migrations (
+                version VARCHAR(255) PRIMARY KEY,
+                applied_at TIMESTAMPTZ DEFAULT NOW(),
+                checksum VARCHAR(64)
+              );
+              
+              -- Create audit schema if not exists
+              CREATE SCHEMA IF NOT EXISTS audit;
+              CREATE SCHEMA IF NOT EXISTS sync;
+              
+              -- Migration v1.0.0: Initial audit tables
+              DO $$
+              BEGIN
+                IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '1.0.0') THEN
+                  -- Create audit_log table
+                  CREATE TABLE IF NOT EXISTS audit.audit_log (
+                    id BIGSERIAL PRIMARY KEY,
+                    db_engine TEXT NOT NULL,
+                    schema_name TEXT,
+                    table_name TEXT NOT NULL,
+                    operation TEXT NOT NULL CHECK (operation IN ('INSERT','UPDATE','DELETE')),
+                    primary_key JSONB NOT NULL,
+                    diff_old JSONB,
+                    diff_new JSONB,
+                    executed_by TEXT,
+                    client_ip INET,
+                    executed_at TIMESTAMPTZ DEFAULT NOW(),
+                    signature BYTEA,
+                    metadata JSONB DEFAULT '{}'::jsonb,
+                    CONSTRAINT valid_operation CHECK (operation IN ('INSERT', 'UPDATE', 'DELETE'))
+                  );
+                  
+                  -- Create indexes for audit_log
+                  CREATE INDEX IF NOT EXISTS idx_audit_log_executed_at ON audit.audit_log(executed_at);
+                  CREATE INDEX IF NOT EXISTS idx_audit_log_table_name ON audit.audit_log(table_name);
+                  CREATE INDEX IF NOT EXISTS idx_audit_log_operation ON audit.audit_log(operation);
+                  CREATE INDEX IF NOT EXISTS idx_audit_log_executed_by ON audit.audit_log(executed_by);
+                  CREATE INDEX IF NOT EXISTS idx_audit_log_primary_key ON audit.audit_log USING GIN(primary_key);
+                  
+                  -- Create sync_metadata table
+                  CREATE TABLE IF NOT EXISTS sync.sync_metadata (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_db TEXT NOT NULL,
+                    target_db TEXT NOT NULL,
+                    table_name TEXT NOT NULL,
+                    last_sync_timestamp TIMESTAMPTZ,
+                    sync_status TEXT DEFAULT 'active' CHECK (sync_status IN ('active', 'paused', 'error', 'inactive')),
+                    error_count INTEGER DEFAULT 0,
+                    last_error TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ DEFAULT NOW(),
+                    config JSONB DEFAULT '{}'::jsonb,
+                    UNIQUE(source_db, target_db, table_name)
+                  );
+                  
+                  -- Create indexes for sync_metadata
+                  CREATE INDEX IF NOT EXISTS idx_sync_metadata_status ON sync.sync_metadata(sync_status);
+                  CREATE INDEX IF NOT EXISTS idx_sync_metadata_last_sync ON sync.sync_metadata(last_sync_timestamp);
+                  
+                  -- Create sync_conflicts table
+                  CREATE TABLE IF NOT EXISTS sync.sync_conflicts (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_db TEXT NOT NULL,
+                    target_db TEXT NOT NULL,
+                    table_name TEXT NOT NULL,
+                    primary_key JSONB NOT NULL,
+                    conflict_type TEXT NOT NULL CHECK (conflict_type IN ('version', 'constraint', 'data')),
+                    source_data JSONB,
+                    target_data JSONB,
+                    resolution_strategy TEXT CHECK (resolution_strategy IN ('source_wins', 'target_wins', 'merge', 'manual')),
+                    resolved BOOLEAN DEFAULT FALSE,
+                    resolved_at TIMESTAMPTZ,
+                    resolved_by TEXT,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    metadata JSONB DEFAULT '{}'::jsonb
+                  );
+                  
+                  -- Create indexes for sync_conflicts
+                  CREATE INDEX IF NOT EXISTS idx_sync_conflicts_resolved ON sync.sync_conflicts(resolved);
+                  CREATE INDEX IF NOT EXISTS idx_sync_conflicts_created_at ON sync.sync_conflicts(created_at);
+                  CREATE INDEX IF NOT EXISTS idx_sync_conflicts_table ON sync.sync_conflicts(table_name);
+                  
+                  INSERT INTO schema_migrations (version, checksum) VALUES ('1.0.0', 'initial_schema');
+                  RAISE NOTICE 'Migration 1.0.0 applied successfully';
+                END IF;
+              END $$;
+              
+              -- Migration v1.1.0: Add performance optimizations
+              DO $$
+              BEGIN
+                IF NOT EXISTS (SELECT 1 FROM schema_migrations WHERE version = '1.1.0') THEN
+                  -- Add partitioning for audit_log by month
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m01 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m02 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-02-01') TO ('2024-03-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m03 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-03-01') TO ('2024-04-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m04 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-04-01') TO ('2024-05-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m05 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-05-01') TO ('2024-06-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m06 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-06-01') TO ('2024-07-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m07 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-07-01') TO ('2024-08-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m08 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-08-01') TO ('2024-09-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m09 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-09-01') TO ('2024-10-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m10 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-10-01') TO ('2024-11-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m11 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-11-01') TO ('2024-12-01');
+                  CREATE TABLE IF NOT EXISTS audit.audit_log_y2024m12 PARTITION OF audit.audit_log
+                    FOR VALUES FROM ('2024-12-01') TO ('2025-01-01');
+                  
+                  -- Add composite indexes for better query performance
+                  CREATE INDEX IF NOT EXISTS idx_audit_log_table_operation_time ON audit.audit_log(table_name, operation, executed_at);
+                  CREATE INDEX IF NOT EXISTS idx_sync_metadata_composite ON sync.sync_metadata(source_db, target_db, sync_status);
+                  
+                  INSERT INTO schema_migrations (version, checksum) VALUES ('1.1.0', 'performance_optimizations');
+                  RAISE NOTICE 'Migration 1.1.0 applied successfully';
+                END IF;
+              END $$;
+              
+              -- Create audit trigger function
+              CREATE OR REPLACE FUNCTION audit.audit_trigger_function()
+              RETURNS TRIGGER AS $$
+              BEGIN
+                IF (TG_OP = 'DELETE') THEN
+                  INSERT INTO audit.audit_log (
+                    db_engine, schema_name, table_name, operation, primary_key, diff_old, executed_by, client_ip
+                  ) VALUES (
+                    'postgresql', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP,
+                    to_jsonb(OLD), row_to_json(OLD)::jsonb,
+                    current_user, inet_client_addr()
+                  );
+                  RETURN OLD;
+                ELSIF (TG_OP = 'UPDATE') THEN
+                  INSERT INTO audit.audit_log (
+                    db_engine, schema_name, table_name, operation, primary_key, diff_old, diff_new, executed_by, client_ip
+                  ) VALUES (
+                    'postgresql', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP,
+                    to_jsonb(NEW), row_to_json(OLD)::jsonb, row_to_json(NEW)::jsonb,
+                    current_user, inet_client_addr()
+                  );
+                  RETURN NEW;
+                ELSIF (TG_OP = 'INSERT') THEN
+                  INSERT INTO audit.audit_log (
+                    db_engine, schema_name, table_name, operation, primary_key, diff_new, executed_by, client_ip
+                  ) VALUES (
+                    'postgresql', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP,
+                    to_jsonb(NEW), row_to_json(NEW)::jsonb,
+                    current_user, inet_client_addr()
+                  );
+                  RETURN NEW;
+                END IF;
+                RETURN NULL;
+              END;
+              $$ LANGUAGE plpgsql;
+              
+              GRANT USAGE ON SCHEMA audit TO {{ .Values.postgresql.username }};
+              GRANT USAGE ON SCHEMA sync TO {{ .Values.postgresql.username }};
+              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA audit TO {{ .Values.postgresql.username }};
+              GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA sync TO {{ .Values.postgresql.username }};
+              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA audit TO {{ .Values.postgresql.username }};
+              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA sync TO {{ .Values.postgresql.username }};
+              
+              SELECT 'PostgreSQL migration completed' as status;
+              EOF
+              {{- end }}
+              
+              # MySQL Migrations
+              {{- if .Values.mysql.enabled }}
+              echo "Running MySQL migrations..."
+              
+              mysql -h {{ .Values.mysql.host }} -P {{ .Values.mysql.port }} -u {{ .Values.mysql.username }} --password=$MYSQL_PASSWORD {{ .Values.mysql.database }} << 'EOF'
+              -- Create migration tracking table
+              CREATE TABLE IF NOT EXISTS schema_migrations (
+                version VARCHAR(255) PRIMARY KEY,
+                applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                checksum VARCHAR(64)
+              );
+              
+              -- Create databases if not exist
+              CREATE DATABASE IF NOT EXISTS audit_db;
+              CREATE DATABASE IF NOT EXISTS sync_db;
+              
+              USE audit_db;
+              
+              -- Check if migration 1.0.0 is already applied
+              SET @migration_exists = (SELECT COUNT(*) FROM {{ .Values.mysql.database }}.schema_migrations WHERE version = '1.0.0');
+              
+              -- Migration 1.0.0: Initial audit tables
+              SET @sql = IF(@migration_exists = 0, '
+                CREATE TABLE IF NOT EXISTS audit_log (
+                  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                  db_engine VARCHAR(50) NOT NULL,
+                  schema_name VARCHAR(255),
+                  table_name VARCHAR(255) NOT NULL,
+                  operation ENUM(''INSERT'', ''UPDATE'', ''DELETE'') NOT NULL,
+                  primary_key JSON NOT NULL,
+                  diff_old JSON,
+                  diff_new JSON,
+                  executed_by VARCHAR(255),
+                  client_ip VARCHAR(45),
+                  executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  signature BLOB,
+                  metadata JSON DEFAULT (JSON_OBJECT()),
+                  INDEX idx_audit_log_executed_at (executed_at),
+                  INDEX idx_audit_log_table_name (table_name),
+                  INDEX idx_audit_log_operation (operation),
+                  INDEX idx_audit_log_executed_by (executed_by)
+                ) ENGINE=InnoDB;
+                
+                INSERT INTO {{ .Values.mysql.database }}.schema_migrations (version, checksum) VALUES (''1.0.0'', ''initial_schema'');
+              ', 'SELECT ''Migration 1.0.0 already applied'' as status;');
+              
+              PREPARE stmt FROM @sql;
+              EXECUTE stmt;
+              DEALLOCATE PREPARE stmt;
+              
+              USE sync_db;
+              
+              -- Create sync tables
+              CREATE TABLE IF NOT EXISTS sync_metadata (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                source_db VARCHAR(255) NOT NULL,
+                target_db VARCHAR(255) NOT NULL,
+                table_name VARCHAR(255) NOT NULL,
+                last_sync_timestamp TIMESTAMP NULL,
+                sync_status ENUM('active', 'paused', 'error', 'inactive') DEFAULT 'active',
+                error_count INT DEFAULT 0,
+                last_error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                config JSON DEFAULT (JSON_OBJECT()),
+                UNIQUE KEY unique_sync (source_db, target_db, table_name),
+                INDEX idx_sync_metadata_status (sync_status),
+                INDEX idx_sync_metadata_last_sync (last_sync_timestamp)
+              ) ENGINE=InnoDB;
+              
+              CREATE TABLE IF NOT EXISTS sync_conflicts (
+                id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                source_db VARCHAR(255) NOT NULL,
+                target_db VARCHAR(255) NOT NULL,
+                table_name VARCHAR(255) NOT NULL,
+                primary_key JSON NOT NULL,
+                conflict_type ENUM('version', 'constraint', 'data') NOT NULL,
+                source_data JSON,
+                target_data JSON,
+                resolution_strategy ENUM('source_wins', 'target_wins', 'merge', 'manual'),
+                resolved BOOLEAN DEFAULT FALSE,
+                resolved_at TIMESTAMP NULL,
+                resolved_by VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                metadata JSON DEFAULT (JSON_OBJECT()),
+                INDEX idx_sync_conflicts_resolved (resolved),
+                INDEX idx_sync_conflicts_created_at (created_at),
+                INDEX idx_sync_conflicts_table (table_name)
+              ) ENGINE=InnoDB;
+              
+              SELECT 'MySQL migration completed' as status;
+              EOF
+              {{- end }}
+              
+              # MongoDB Migrations
+              {{- if .Values.mongodb.enabled }}
+              echo "Running MongoDB migrations..."
+              
+              mongosh --host {{ .Values.mongodb.host }}:{{ .Values.mongodb.port }} {{ .Values.mongodb.database }} << 'EOF'
+              // Create migration tracking collection
+              db.createCollection("schema_migrations");
+              db.schema_migrations.createIndex({ "version": 1 }, { unique: true });
+              
+              // Check if migration 1.0.0 is already applied
+              var migrationExists = db.schema_migrations.findOne({ version: "1.0.0" });
+              
+              if (!migrationExists) {
+                // Migration 1.0.0: Initial collections and indexes
+                
+                // Create audit_log collection
+                db.createCollection("audit_log");
+                db.audit_log.createIndex({ "executed_at": 1 });
+                db.audit_log.createIndex({ "table_name": 1 });
+                db.audit_log.createIndex({ "operation": 1 });
+                db.audit_log.createIndex({ "executed_by": 1 });
+                db.audit_log.createIndex({ "primary_key": 1 });
+                
+                // Create sync_metadata collection
+                db.createCollection("sync_metadata");
+                db.sync_metadata.createIndex({ "source_db": 1, "target_db": 1, "table_name": 1 }, { unique: true });
+                db.sync_metadata.createIndex({ "sync_status": 1 });
+                db.sync_metadata.createIndex({ "last_sync_timestamp": 1 });
+                
+                // Create sync_conflicts collection
+                db.createCollection("sync_conflicts");
+                db.sync_conflicts.createIndex({ "resolved": 1 });
+                db.sync_conflicts.createIndex({ "created_at": 1 });
+                db.sync_conflicts.createIndex({ "table_name": 1 });
+                db.sync_conflicts.createIndex({ "source_db": 1, "target_db": 1 });
+                
+                // Insert migration record
+                db.schema_migrations.insertOne({
+                  version: "1.0.0",
+                  applied_at: new Date(),
+                  checksum: "initial_schema"
+                });
+                
+                print("Migration 1.0.0 applied successfully");
+              } else {
+                print("Migration 1.0.0 already applied");
+              }
+              
+              // Migration 1.1.0: Add TTL indexes for automatic cleanup
+              var migration110Exists = db.schema_migrations.findOne({ version: "1.1.0" });
+              
+              if (!migration110Exists) {
+                // Add TTL index for audit_log (expire after 90 days)
+                db.audit_log.createIndex({ "executed_at": 1 }, { expireAfterSeconds: 7776000 });
+                
+                // Add compound indexes for better performance
+                db.audit_log.createIndex({ "table_name": 1, "operation": 1, "executed_at": 1 });
+                db.sync_metadata.createIndex({ "source_db": 1, "target_db": 1, "sync_status": 1 });
+                
+                db.schema_migrations.insertOne({
+                  version: "1.1.0",
+                  applied_at: new Date(),
+                  checksum: "performance_optimizations"
+                });
+                
+                print("Migration 1.1.0 applied successfully");
+              } else {
+                print("Migration 1.1.0 already applied");
+              }
+              
+              print("MongoDB migration completed");
+              EOF
+              {{- end }}
+              
+              echo "All database migrations completed successfully!"
+              
+              # Verify migrations
+              echo "Verifying migrations..."
+              
+              {{- if .Values.postgresql.enabled }}
+              echo "PostgreSQL migration status:"
+              PGPASSWORD=$POSTGRES_PASSWORD psql -h {{ .Values.postgresql.host }} -p {{ .Values.postgresql.port }} -U {{ .Values.postgresql.username }} -d {{ .Values.postgresql.database }} -c "SELECT version, applied_at FROM schema_migrations ORDER BY applied_at;"
+              {{- end }}
+              
+              {{- if .Values.mysql.enabled }}
+              echo "MySQL migration status:"
+              mysql -h {{ .Values.mysql.host }} -P {{ .Values.mysql.port }} -u {{ .Values.mysql.username }} --password=$MYSQL_PASSWORD {{ .Values.mysql.database }} -e "SELECT version, applied_at FROM schema_migrations ORDER BY applied_at;"
+              {{- end }}
+              
+              {{- if .Values.mongodb.enabled }}
+              echo "MongoDB migration status:"
+              mongosh --host {{ .Values.mongodb.host }}:{{ .Values.mongodb.port }} {{ .Values.mongodb.database }} --eval "db.schema_migrations.find().sort({applied_at: 1}).forEach(printjson)"
+              {{- end }}
+              
+              echo "Migration job completed successfully!"
+          env:
+            {{- if .Values.postgresql.enabled }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: postgresql-password
+            {{- end }}
+            {{- if .Values.mysql.enabled }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: mysql-password
+            {{- end }}
+            {{- if .Values.mongodb.enabled }}
+            - name: MONGODB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: mongodb-password
+            {{- end }}
+          resources:
+            {{- toYaml .Values.migration.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

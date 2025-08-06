@@ -1,0 +1,510 @@
+{{- if .Values.cronJobs.auditCleanup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-audit-cleanup
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: audit-cleanup
+  {{- with .Values.cronJobs.auditCleanup.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.cronJobs.auditCleanup.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ .Values.cronJobs.auditCleanup.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronJobs.auditCleanup.concurrencyPolicy }}
+  failedJobsHistoryLimit: {{ .Values.cronJobs.auditCleanup.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ .Values.cronJobs.auditCleanup.successfulJobsHistoryLimit }}
+  {{- if .Values.cronJobs.auditCleanup.startingDeadlineSeconds }}
+  startingDeadlineSeconds: {{ .Values.cronJobs.auditCleanup.startingDeadlineSeconds }}
+  {{- end }}
+  {{- if .Values.cronJobs.auditCleanup.suspend }}
+  suspend: {{ .Values.cronJobs.auditCleanup.suspend }}
+  {{- end }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.cronJobs.auditCleanup.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.cronJobs.auditCleanup.activeDeadlineSeconds }}
+      {{- if .Values.cronJobs.auditCleanup.ttlSecondsAfterFinished }}
+      ttlSecondsAfterFinished: {{ .Values.cronJobs.auditCleanup.ttlSecondsAfterFinished }}
+      {{- end }}
+      template:
+        metadata:
+          labels:
+            {{- include "worker-sync.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: audit-cleanup
+          {{- with .Values.cronJobs.auditCleanup.podLabels }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.auditCleanup.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: {{ .Values.cronJobs.auditCleanup.restartPolicy }}
+          serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.auditCleanup.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.auditCleanup.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.auditCleanup.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.cronJobs.auditCleanup.securityContext.enabled }}
+          securityContext:
+            {{- omit .Values.cronJobs.auditCleanup.securityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: audit-cleanup
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "Starting audit log cleanup..."
+                  
+                  # Calculate retention date
+                  RETENTION_DAYS={{ .Values.cronJobs.auditCleanup.retentionDays }}
+                  CUTOFF_DATE=$(date -d "${RETENTION_DAYS} days ago" '+%Y-%m-%d')
+                  
+                  echo "Cleaning audit logs older than ${CUTOFF_DATE}..."
+                  
+                  # PostgreSQL cleanup
+                  PGPASSWORD="${POSTGRES_PASSWORD}" psql -h {{ .Values.databases.postgresql.host }} -p {{ .Values.databases.postgresql.port }} -U {{ .Values.databases.postgresql.username }} -d {{ .Values.databases.postgresql.database }} << EOF
+                  DELETE FROM audit_log WHERE executed_at < '${CUTOFF_DATE}';
+                  VACUUM ANALYZE audit_log;
+                  EOF
+                  
+                  # MySQL cleanup
+                  mysql -h {{ .Values.databases.mysql.host }} -P {{ .Values.databases.mysql.port }} -u {{ .Values.databases.mysql.username }} -p"${MYSQL_PASSWORD}" {{ .Values.databases.mysql.database }} << EOF
+                  DELETE FROM audit_log WHERE executed_at < '${CUTOFF_DATE}';
+                  OPTIMIZE TABLE audit_log;
+                  EOF
+                  
+                  echo "Audit log cleanup completed successfully!"
+              env:
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "worker-sync.secretName" . }}
+                      key: postgres-password
+                - name: MYSQL_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "worker-sync.secretName" . }}
+                      key: mysql-password
+              {{- if .Values.cronJobs.auditCleanup.containerSecurityContext.enabled }}
+              securityContext:
+                {{- omit .Values.cronJobs.auditCleanup.containerSecurityContext "enabled" | toYaml | nindent 16 }}
+              {{- end }}
+              {{- with .Values.cronJobs.auditCleanup.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+{{- end }}
+
+---
+{{- if .Values.cronJobs.metricsCleanup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-metrics-cleanup
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: metrics-cleanup
+  {{- with .Values.cronJobs.metricsCleanup.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.cronJobs.metricsCleanup.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ .Values.cronJobs.metricsCleanup.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronJobs.metricsCleanup.concurrencyPolicy }}
+  failedJobsHistoryLimit: {{ .Values.cronJobs.metricsCleanup.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ .Values.cronJobs.metricsCleanup.successfulJobsHistoryLimit }}
+  {{- if .Values.cronJobs.metricsCleanup.startingDeadlineSeconds }}
+  startingDeadlineSeconds: {{ .Values.cronJobs.metricsCleanup.startingDeadlineSeconds }}
+  {{- end }}
+  {{- if .Values.cronJobs.metricsCleanup.suspend }}
+  suspend: {{ .Values.cronJobs.metricsCleanup.suspend }}
+  {{- end }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.cronJobs.metricsCleanup.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.cronJobs.metricsCleanup.activeDeadlineSeconds }}
+      {{- if .Values.cronJobs.metricsCleanup.ttlSecondsAfterFinished }}
+      ttlSecondsAfterFinished: {{ .Values.cronJobs.metricsCleanup.ttlSecondsAfterFinished }}
+      {{- end }}
+      template:
+        metadata:
+          labels:
+            {{- include "worker-sync.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: metrics-cleanup
+          {{- with .Values.cronJobs.metricsCleanup.podLabels }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.metricsCleanup.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: {{ .Values.cronJobs.metricsCleanup.restartPolicy }}
+          serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.metricsCleanup.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.metricsCleanup.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.metricsCleanup.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.cronJobs.metricsCleanup.securityContext.enabled }}
+          securityContext:
+            {{- omit .Values.cronJobs.metricsCleanup.securityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: metrics-cleanup
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "Starting metrics cleanup..."
+                  
+                  # Calculate retention date
+                  RETENTION_DAYS={{ .Values.cronJobs.metricsCleanup.retentionDays }}
+                  CUTOFF_DATE=$(date -d "${RETENTION_DAYS} days ago" '+%Y-%m-%d')
+                  
+                  echo "Cleaning metrics older than ${CUTOFF_DATE}..."
+                  
+                  # Clean Redis metrics
+                  redis-cli -h {{ .Values.redis.host }} -p {{ .Values.redis.port }} -a "${REDIS_PASSWORD}" << EOF
+                  EVAL "
+                    local keys = redis.call('KEYS', 'metrics:*')
+                    local cutoff = ${CUTOFF_DATE}
+                    local deleted = 0
+                    for i=1,#keys do
+                      local ttl = redis.call('TTL', keys[i])
+                      if ttl > 0 and ttl < cutoff then
+                        redis.call('DEL', keys[i])
+                        deleted = deleted + 1
+                      end
+                    end
+                    return deleted
+                  " 0
+                  EOF
+                  
+                  echo "Metrics cleanup completed successfully!"
+              env:
+                - name: REDIS_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "worker-sync.secretName" . }}
+                      key: redis-password
+              {{- if .Values.cronJobs.metricsCleanup.containerSecurityContext.enabled }}
+              securityContext:
+                {{- omit .Values.cronJobs.metricsCleanup.containerSecurityContext "enabled" | toYaml | nindent 16 }}
+              {{- end }}
+              {{- with .Values.cronJobs.metricsCleanup.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+{{- end }}
+
+---
+{{- if .Values.cronJobs.healthCheck.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-health-check
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: health-check
+  {{- with .Values.cronJobs.healthCheck.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.cronJobs.healthCheck.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ .Values.cronJobs.healthCheck.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronJobs.healthCheck.concurrencyPolicy }}
+  failedJobsHistoryLimit: {{ .Values.cronJobs.healthCheck.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ .Values.cronJobs.healthCheck.successfulJobsHistoryLimit }}
+  {{- if .Values.cronJobs.healthCheck.startingDeadlineSeconds }}
+  startingDeadlineSeconds: {{ .Values.cronJobs.healthCheck.startingDeadlineSeconds }}
+  {{- end }}
+  {{- if .Values.cronJobs.healthCheck.suspend }}
+  suspend: {{ .Values.cronJobs.healthCheck.suspend }}
+  {{- end }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.cronJobs.healthCheck.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.cronJobs.healthCheck.activeDeadlineSeconds }}
+      {{- if .Values.cronJobs.healthCheck.ttlSecondsAfterFinished }}
+      ttlSecondsAfterFinished: {{ .Values.cronJobs.healthCheck.ttlSecondsAfterFinished }}
+      {{- end }}
+      template:
+        metadata:
+          labels:
+            {{- include "worker-sync.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: health-check
+          {{- with .Values.cronJobs.healthCheck.podLabels }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.healthCheck.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: {{ .Values.cronJobs.healthCheck.restartPolicy }}
+          serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.healthCheck.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.healthCheck.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.healthCheck.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.cronJobs.healthCheck.securityContext.enabled }}
+          securityContext:
+            {{- omit .Values.cronJobs.healthCheck.securityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: health-check
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "Starting comprehensive health check..."
+                  
+                  # Check database connections
+                  echo "Checking PostgreSQL connection..."
+                  pg_isready -h {{ .Values.databases.postgresql.host }} -p {{ .Values.databases.postgresql.port }} -U {{ .Values.databases.postgresql.username }}
+                  
+                  echo "Checking MySQL connection..."
+                  mysqladmin ping -h {{ .Values.databases.mysql.host }} -P {{ .Values.databases.mysql.port }} -u {{ .Values.databases.mysql.username }} --silent
+                  
+                  echo "Checking MongoDB connection..."
+                  mongosh --host {{ .Values.databases.mongodb.host }}:{{ .Values.databases.mongodb.port }} --eval "db.adminCommand('ping')" --quiet
+                  
+                  # Check Redis connection
+                  echo "Checking Redis connection..."
+                  redis-cli -h {{ .Values.redis.host }} -p {{ .Values.redis.port }} -a "${REDIS_PASSWORD}" ping
+                  
+                  # Check Kafka connection
+                  echo "Checking Kafka connection..."
+                  kafka-topics --bootstrap-server {{ .Values.kafka.brokers }} --list
+                  
+                  # Check sync lag
+                  echo "Checking sync lag..."
+                  npm run health:check
+                  
+                  echo "Health check completed successfully!"
+              env:
+                {{- include "worker-sync.env" . | nindent 16 }}
+              {{- if .Values.cronJobs.healthCheck.containerSecurityContext.enabled }}
+              securityContext:
+                {{- omit .Values.cronJobs.healthCheck.containerSecurityContext "enabled" | toYaml | nindent 16 }}
+              {{- end }}
+              {{- with .Values.cronJobs.healthCheck.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+{{- end }}
+
+---
+{{- if .Values.cronJobs.backup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-backup
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+  {{- with .Values.cronJobs.backup.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.cronJobs.backup.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  schedule: {{ .Values.cronJobs.backup.schedule | quote }}
+  concurrencyPolicy: {{ .Values.cronJobs.backup.concurrencyPolicy }}
+  failedJobsHistoryLimit: {{ .Values.cronJobs.backup.failedJobsHistoryLimit }}
+  successfulJobsHistoryLimit: {{ .Values.cronJobs.backup.successfulJobsHistoryLimit }}
+  {{- if .Values.cronJobs.backup.startingDeadlineSeconds }}
+  startingDeadlineSeconds: {{ .Values.cronJobs.backup.startingDeadlineSeconds }}
+  {{- end }}
+  {{- if .Values.cronJobs.backup.suspend }}
+  suspend: {{ .Values.cronJobs.backup.suspend }}
+  {{- end }}
+  jobTemplate:
+    spec:
+      backoffLimit: {{ .Values.cronJobs.backup.backoffLimit }}
+      activeDeadlineSeconds: {{ .Values.cronJobs.backup.activeDeadlineSeconds }}
+      {{- if .Values.cronJobs.backup.ttlSecondsAfterFinished }}
+      ttlSecondsAfterFinished: {{ .Values.cronJobs.backup.ttlSecondsAfterFinished }}
+      {{- end }}
+      template:
+        metadata:
+          labels:
+            {{- include "worker-sync.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: backup
+          {{- with .Values.cronJobs.backup.podLabels }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.backup.podAnnotations }}
+          annotations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+        spec:
+          restartPolicy: {{ .Values.cronJobs.backup.restartPolicy }}
+          serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.backup.nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.backup.affinity }}
+          affinity:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.cronJobs.backup.tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.cronJobs.backup.securityContext.enabled }}
+          securityContext:
+            {{- omit .Values.cronJobs.backup.securityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: backup
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  echo "Starting backup process..."
+                  
+                  BACKUP_DATE=$(date '+%Y%m%d_%H%M%S')
+                  BACKUP_DIR="/tmp/backups/${BACKUP_DATE}"
+                  mkdir -p "${BACKUP_DIR}"
+                  
+                  # PostgreSQL backup
+                  echo "Backing up PostgreSQL..."
+                  PGPASSWORD="${POSTGRES_PASSWORD}" pg_dump -h {{ .Values.databases.postgresql.host }} -p {{ .Values.databases.postgresql.port }} -U {{ .Values.databases.postgresql.username }} -d {{ .Values.databases.postgresql.database }} > "${BACKUP_DIR}/postgresql_backup.sql"
+                  
+                  # MySQL backup
+                  echo "Backing up MySQL..."
+                  mysqldump -h {{ .Values.databases.mysql.host }} -P {{ .Values.databases.mysql.port }} -u {{ .Values.databases.mysql.username }} -p"${MYSQL_PASSWORD}" {{ .Values.databases.mysql.database }} > "${BACKUP_DIR}/mysql_backup.sql"
+                  
+                  # MongoDB backup
+                  echo "Backing up MongoDB..."
+                  mongodump --host {{ .Values.databases.mongodb.host }}:{{ .Values.databases.mongodb.port }} --db {{ .Values.databases.mongodb.database }} --out "${BACKUP_DIR}/mongodb_backup"
+                  
+                  # Compress backups
+                  echo "Compressing backups..."
+                  tar -czf "/tmp/backup_${BACKUP_DATE}.tar.gz" -C /tmp/backups "${BACKUP_DATE}"
+                  
+                  # Upload to S3 (if configured)
+                  {{- if .Values.cronJobs.backup.s3.enabled }}
+                  echo "Uploading to S3..."
+                  aws s3 cp "/tmp/backup_${BACKUP_DATE}.tar.gz" "s3://{{ .Values.cronJobs.backup.s3.bucket }}/{{ .Values.cronJobs.backup.s3.prefix }}backup_${BACKUP_DATE}.tar.gz"
+                  {{- end }}
+                  
+                  # Cleanup old backups
+                  find /tmp -name "backup_*.tar.gz" -mtime +{{ .Values.cronJobs.backup.retentionDays }} -delete
+                  
+                  echo "Backup completed successfully!"
+              env:
+                - name: POSTGRES_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "worker-sync.secretName" . }}
+                      key: postgres-password
+                - name: MYSQL_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "worker-sync.secretName" . }}
+                      key: mysql-password
+                - name: MONGODB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "worker-sync.secretName" . }}
+                      key: mongodb-password
+                {{- if .Values.cronJobs.backup.s3.enabled }}
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "worker-sync.secretName" . }}
+                      key: aws-access-key-id
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "worker-sync.secretName" . }}
+                      key: aws-secret-access-key
+                - name: AWS_DEFAULT_REGION
+                  value: {{ .Values.cronJobs.backup.s3.region | quote }}
+                {{- end }}
+              {{- if .Values.cronJobs.backup.containerSecurityContext.enabled }}
+              securityContext:
+                {{- omit .Values.cronJobs.backup.containerSecurityContext "enabled" | toYaml | nindent 16 }}
+              {{- end }}
+              {{- with .Values.cronJobs.backup.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /tmp/backups
+          volumes:
+            - name: backup-storage
+              {{- if .Values.cronJobs.backup.persistence.enabled }}
+              persistentVolumeClaim:
+                claimName: {{ include "worker-sync.fullname" . }}-backup-pvc
+              {{- else }}
+              emptyDir: {}
+              {{- end }}
+{{- end }}

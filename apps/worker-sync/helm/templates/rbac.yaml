@@ -1,43 +1,121 @@
-{{- if .Values.serviceAccount.create -}}
+{{- if .Values.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "worker-sync.serviceAccountName" . }}
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: service-account
+  {{- with .Values.rbac.serviceAccount.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.rbac.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: {{ .Values.rbac.serviceAccount.automountServiceAccountToken }}
+
+---
+{{- if .Values.rbac.clusterRole.create }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "worker-sync.fullname" . }}
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cluster-role
+  {{- with .Values.rbac.clusterRole.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.rbac.clusterRole.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  # Permisos para leer ConfigMaps y Secrets
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  # Permisos para leer información de pods (para service discovery)
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services"]
+    verbs: ["get", "list", "watch"]
+  # Permisos para métricas y health checks
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["get"]
+  # Permisos para eventos (logging)
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Permisos para métricas custom
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["custom.metrics.k8s.io"]
+    resources: ["*"]
+    verbs: ["get", "list"]
+  {{- with .Values.rbac.clusterRole.rules }}
+    {{- toYaml . | nindent 2 }}
+  {{- end }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "worker-sync.fullname" . }}
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cluster-role-binding
+  {{- with .Values.rbac.clusterRoleBinding.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.rbac.clusterRoleBinding.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "worker-sync.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "worker-sync.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+
+---
+{{- if .Values.rbac.role.create }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "worker-sync.fullname" . }}
   labels:
     {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: role
+  {{- with .Values.rbac.role.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.rbac.role.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 rules:
-  # Allow reading pods for health checks and metrics
+  # Permisos específicos del namespace
   - apiGroups: [""]
-    resources: ["pods"]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "watch"]
-  # Allow reading services for service discovery
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list", "watch"]
-  # Allow reading endpoints for load balancing
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    verbs: ["get", "list", "watch"]
-  # Allow reading configmaps for configuration
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list", "watch"]
-  # Allow reading secrets for credentials
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "watch"]
-  # Allow creating events for logging
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "patch"]
-  # Allow reading custom metrics for HPA
-  - apiGroups: ["metrics.k8s.io"]
-    resources: ["pods", "nodes"]
-    verbs: ["get", "list"]
-  # Allow reading custom metrics for monitoring
-  - apiGroups: ["custom.metrics.k8s.io"]
-    resources: ["*"]
-    verbs: ["get", "list"]
+  # Permisos para coordinar entre pods
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- with .Values.rbac.role.rules }}
+    {{- toYaml . | nindent 2 }}
+  {{- end }}
+
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -45,6 +123,14 @@ metadata:
   name: {{ include "worker-sync.fullname" . }}
   labels:
     {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: role-binding
+  {{- with .Values.rbac.roleBinding.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.rbac.roleBinding.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -53,4 +139,87 @@ subjects:
   - kind: ServiceAccount
     name: {{ include "worker-sync.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
+{{- end }}
+
+---
+{{- if and .Values.monitoring.prometheus.enabled .Values.monitoring.prometheus.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-service-account
+  {{- with .Values.monitoring.prometheus.rbac.serviceAccount.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.prometheus.rbac.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: {{ .Values.monitoring.prometheus.rbac.serviceAccount.automountServiceAccountToken }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-cluster-role
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+      - ingresses
+      - configmaps
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-cluster-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "worker-sync.fullname" . }}-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "worker-sync.fullname" . }}-prometheus
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+
+---
+{{- if and .Values.monitoring.grafana.enabled .Values.monitoring.grafana.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-grafana
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana-service-account
+  {{- with .Values.monitoring.grafana.rbac.serviceAccount.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.grafana.rbac.serviceAccount.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+automountServiceAccountToken: {{ .Values.monitoring.grafana.rbac.serviceAccount.automountServiceAccountToken }}
+{{- end }}
 {{- end }}

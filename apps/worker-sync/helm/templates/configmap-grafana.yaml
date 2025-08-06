@@ -1,0 +1,277 @@
+{{- if .Values.monitoring.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-grafana-config
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  grafana.ini: |
+    [analytics]
+    check_for_updates = {{ .Values.monitoring.grafana.analytics.checkForUpdates | default true }}
+    reporting_enabled = {{ .Values.monitoring.grafana.analytics.reportingEnabled | default false }}
+
+    [auth]
+    disable_login_form = {{ .Values.monitoring.grafana.auth.disableLoginForm | default false }}
+    disable_signout_menu = {{ .Values.monitoring.grafana.auth.disableSignoutMenu | default false }}
+
+    {{- if .Values.monitoring.grafana.auth.anonymous.enabled }}
+    [auth.anonymous]
+    enabled = true
+    org_name = {{ .Values.monitoring.grafana.auth.anonymous.orgName | default "Main Org." }}
+    org_role = {{ .Values.monitoring.grafana.auth.anonymous.orgRole | default "Viewer" }}
+    hide_version = {{ .Values.monitoring.grafana.auth.anonymous.hideVersion | default false }}
+    {{- end }}
+
+    {{- if .Values.monitoring.grafana.auth.basic.enabled }}
+    [auth.basic]
+    enabled = {{ .Values.monitoring.grafana.auth.basic.enabled }}
+    {{- end }}
+
+    {{- if .Values.monitoring.grafana.auth.ldap.enabled }}
+    [auth.ldap]
+    enabled = {{ .Values.monitoring.grafana.auth.ldap.enabled }}
+    config_file = /etc/grafana/ldap.toml
+    allow_sign_up = {{ .Values.monitoring.grafana.auth.ldap.allowSignUp | default true }}
+    {{- end }}
+
+    [dashboards]
+    default_home_dashboard_path = {{ .Values.monitoring.grafana.dashboards.defaultHomeDashboardPath | default "/var/lib/grafana/dashboards/worker-sync-overview.json" }}
+
+    [database]
+    type = {{ .Values.monitoring.grafana.database.type | default "sqlite3" }}
+    {{- if eq .Values.monitoring.grafana.database.type "sqlite3" }}
+    path = {{ .Values.monitoring.grafana.database.path | default "/var/lib/grafana/grafana.db" }}
+    {{- else }}
+    host = {{ .Values.monitoring.grafana.database.host }}
+    name = {{ .Values.monitoring.grafana.database.name }}
+    user = {{ .Values.monitoring.grafana.database.user }}
+    password = {{ .Values.monitoring.grafana.database.password }}
+    ssl_mode = {{ .Values.monitoring.grafana.database.sslMode | default "disable" }}
+    {{- end }}
+
+    [log]
+    mode = {{ .Values.monitoring.grafana.log.mode | default "console" }}
+    level = {{ .Values.monitoring.grafana.log.level | default "info" }}
+
+    [paths]
+    data = {{ .Values.monitoring.grafana.paths.data | default "/var/lib/grafana" }}
+    logs = {{ .Values.monitoring.grafana.paths.logs | default "/var/log/grafana" }}
+    plugins = {{ .Values.monitoring.grafana.paths.plugins | default "/var/lib/grafana/plugins" }}
+    provisioning = {{ .Values.monitoring.grafana.paths.provisioning | default "/etc/grafana/provisioning" }}
+
+    [security]
+    admin_user = {{ .Values.monitoring.grafana.security.adminUser | default "admin" }}
+    admin_password = {{ .Values.monitoring.grafana.security.adminPassword | default "admin" }}
+    secret_key = {{ .Values.monitoring.grafana.security.secretKey | default "SW2YcwTIb9zpOOhoPsMm" }}
+    disable_gravatar = {{ .Values.monitoring.grafana.security.disableGravatar | default false }}
+    data_source_proxy_whitelist = {{ .Values.monitoring.grafana.security.dataSourceProxyWhitelist | default "" }}
+    cookie_secure = {{ .Values.monitoring.grafana.security.cookieSecure | default false }}
+    cookie_samesite = {{ .Values.monitoring.grafana.security.cookieSamesite | default "lax" }}
+    allow_embedding = {{ .Values.monitoring.grafana.security.allowEmbedding | default false }}
+
+    [server]
+    http_addr = {{ .Values.monitoring.grafana.server.httpAddr | default "0.0.0.0" }}
+    http_port = {{ .Values.monitoring.grafana.server.httpPort | default 3000 }}
+    domain = {{ .Values.monitoring.grafana.server.domain | default "localhost" }}
+    root_url = {{ .Values.monitoring.grafana.server.rootUrl | default "%(protocol)s://%(domain)s:%(http_port)s/" }}
+    serve_from_sub_path = {{ .Values.monitoring.grafana.server.serveFromSubPath | default false }}
+    enable_gzip = {{ .Values.monitoring.grafana.server.enableGzip | default false }}
+
+    [smtp]
+    enabled = {{ .Values.monitoring.grafana.smtp.enabled | default false }}
+    {{- if .Values.monitoring.grafana.smtp.enabled }}
+    host = {{ .Values.monitoring.grafana.smtp.host }}
+    user = {{ .Values.monitoring.grafana.smtp.user }}
+    password = {{ .Values.monitoring.grafana.smtp.password }}
+    from_address = {{ .Values.monitoring.grafana.smtp.fromAddress }}
+    from_name = {{ .Values.monitoring.grafana.smtp.fromName | default "Grafana" }}
+    skip_verify = {{ .Values.monitoring.grafana.smtp.skipVerify | default false }}
+    {{- end }}
+
+    [users]
+    allow_sign_up = {{ .Values.monitoring.grafana.users.allowSignUp | default false }}
+    allow_org_create = {{ .Values.monitoring.grafana.users.allowOrgCreate | default false }}
+    auto_assign_org = {{ .Values.monitoring.grafana.users.autoAssignOrg | default true }}
+    auto_assign_org_id = {{ .Values.monitoring.grafana.users.autoAssignOrgId | default 1 }}
+    auto_assign_org_role = {{ .Values.monitoring.grafana.users.autoAssignOrgRole | default "Viewer" }}
+    verify_email_enabled = {{ .Values.monitoring.grafana.users.verifyEmailEnabled | default false }}
+    login_hint = {{ .Values.monitoring.grafana.users.loginHint | default "email or username" }}
+    password_hint = {{ .Values.monitoring.grafana.users.passwordHint | default "password" }}
+    default_theme = {{ .Values.monitoring.grafana.users.defaultTheme | default "dark" }}
+
+    {{- with .Values.monitoring.grafana.extraConfig }}
+    {{- . | nindent 4 }}
+    {{- end }}
+
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://{{ include "worker-sync.fullname" . }}-prometheus:{{ .Values.monitoring.prometheus.service.port | default 9090 }}
+        isDefault: true
+        editable: {{ .Values.monitoring.grafana.datasources.prometheus.editable | default true }}
+        jsonData:
+          timeInterval: {{ .Values.monitoring.grafana.datasources.prometheus.timeInterval | default "15s" }}
+          queryTimeout: {{ .Values.monitoring.grafana.datasources.prometheus.queryTimeout | default "60s" }}
+          httpMethod: {{ .Values.monitoring.grafana.datasources.prometheus.httpMethod | default "POST" }}
+          exemplarTraceIdDestinations:
+            - name: trace_id
+              datasourceUid: jaeger
+        {{- if .Values.monitoring.grafana.datasources.prometheus.basicAuth.enabled }}
+        basicAuth: true
+        basicAuthUser: {{ .Values.monitoring.grafana.datasources.prometheus.basicAuth.username }}
+        secureJsonData:
+          basicAuthPassword: {{ .Values.monitoring.grafana.datasources.prometheus.basicAuth.password }}
+        {{- end }}
+
+      {{- if .Values.monitoring.grafana.datasources.jaeger.enabled }}
+      - name: Jaeger
+        type: jaeger
+        access: proxy
+        url: {{ .Values.monitoring.grafana.datasources.jaeger.url }}
+        uid: jaeger
+        editable: {{ .Values.monitoring.grafana.datasources.jaeger.editable | default true }}
+        jsonData:
+          tracesToLogs:
+            datasourceUid: loki
+            tags: ['job', 'instance', 'pod', 'namespace']
+            mappedTags: [{ key: 'service.name', value: 'service' }]
+            mapTagNamesEnabled: false
+            spanStartTimeShift: '1h'
+            spanEndTimeShift: '1h'
+            filterByTraceID: false
+            filterBySpanID: false
+          tracesToMetrics:
+            datasourceUid: prometheus
+            tags: [{ key: 'service.name', value: 'service' }, { key: 'job' }]
+            queries:
+              - name: 'Sample query'
+                query: 'sum(rate(traces_spanmetrics_latency_bucket{$$__tags}[5m]))'
+          nodeGraph:
+            enabled: true
+      {{- end }}
+
+      {{- if .Values.monitoring.grafana.datasources.loki.enabled }}
+      - name: Loki
+        type: loki
+        access: proxy
+        url: {{ .Values.monitoring.grafana.datasources.loki.url }}
+        uid: loki
+        editable: {{ .Values.monitoring.grafana.datasources.loki.editable | default true }}
+        jsonData:
+          derivedFields:
+            - datasourceUid: jaeger
+              matcherRegex: "trace_id=(\\w+)"
+              name: TraceID
+              url: "$${__value.raw}"
+      {{- end }}
+
+      {{- with .Values.monitoring.grafana.datasources.extra }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: 'default'
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: {{ .Values.monitoring.grafana.dashboards.disableDeletion | default false }}
+        updateIntervalSeconds: {{ .Values.monitoring.grafana.dashboards.updateIntervalSeconds | default 10 }}
+        allowUiUpdates: {{ .Values.monitoring.grafana.dashboards.allowUiUpdates | default true }}
+        options:
+          path: /var/lib/grafana/dashboards
+
+      - name: 'worker-sync'
+        orgId: 1
+        folder: 'Worker Sync'
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards/worker-sync
+
+      - name: 'infrastructure'
+        orgId: 1
+        folder: 'Infrastructure'
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 10
+        allowUiUpdates: true
+        options:
+          path: /var/lib/grafana/dashboards/infrastructure
+
+      {{- with .Values.monitoring.grafana.dashboards.providers }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+
+  notifiers.yaml: |
+    apiVersion: 1
+    notifiers:
+      {{- if .Values.monitoring.grafana.notifiers.slack.enabled }}
+      - name: slack
+        type: slack
+        uid: slack
+        org_id: 1
+        is_default: {{ .Values.monitoring.grafana.notifiers.slack.isDefault | default true }}
+        send_reminder: {{ .Values.monitoring.grafana.notifiers.slack.sendReminder | default true }}
+        disable_resolve_message: {{ .Values.monitoring.grafana.notifiers.slack.disableResolveMessage | default false }}
+        frequency: {{ .Values.monitoring.grafana.notifiers.slack.frequency | default "10s" }}
+        settings:
+          url: {{ .Values.monitoring.grafana.notifiers.slack.webhookUrl }}
+          channel: {{ .Values.monitoring.grafana.notifiers.slack.channel | default "#alerts" }}
+          username: {{ .Values.monitoring.grafana.notifiers.slack.username | default "Grafana" }}
+          title: {{ .Values.monitoring.grafana.notifiers.slack.title | default "Grafana Alert" }}
+          text: {{ .Values.monitoring.grafana.notifiers.slack.text | default "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}" }}
+      {{- end }}
+
+      {{- if .Values.monitoring.grafana.notifiers.email.enabled }}
+      - name: email
+        type: email
+        uid: email
+        org_id: 1
+        is_default: {{ .Values.monitoring.grafana.notifiers.email.isDefault | default false }}
+        send_reminder: {{ .Values.monitoring.grafana.notifiers.email.sendReminder | default true }}
+        disable_resolve_message: {{ .Values.monitoring.grafana.notifiers.email.disableResolveMessage | default false }}
+        frequency: {{ .Values.monitoring.grafana.notifiers.email.frequency | default "10s" }}
+        settings:
+          addresses: {{ .Values.monitoring.grafana.notifiers.email.addresses | join ";" }}
+          subject: {{ .Values.monitoring.grafana.notifiers.email.subject | default "Grafana Alert" }}
+      {{- end }}
+
+      {{- if .Values.monitoring.grafana.notifiers.webhook.enabled }}
+      - name: webhook
+        type: webhook
+        uid: webhook
+        org_id: 1
+        is_default: {{ .Values.monitoring.grafana.notifiers.webhook.isDefault | default false }}
+        send_reminder: {{ .Values.monitoring.grafana.notifiers.webhook.sendReminder | default true }}
+        disable_resolve_message: {{ .Values.monitoring.grafana.notifiers.webhook.disableResolveMessage | default false }}
+        frequency: {{ .Values.monitoring.grafana.notifiers.webhook.frequency | default "10s" }}
+        settings:
+          url: {{ .Values.monitoring.grafana.notifiers.webhook.url }}
+          http_method: {{ .Values.monitoring.grafana.notifiers.webhook.httpMethod | default "POST" }}
+          {{- if .Values.monitoring.grafana.notifiers.webhook.username }}
+          username: {{ .Values.monitoring.grafana.notifiers.webhook.username }}
+          {{- end }}
+          {{- if .Values.monitoring.grafana.notifiers.webhook.password }}
+          password: {{ .Values.monitoring.grafana.notifiers.webhook.password }}
+          {{- end }}
+      {{- end }}
+
+      {{- with .Values.monitoring.grafana.notifiers.extra }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+
+  {{- if .Values.monitoring.grafana.auth.ldap.enabled }}
+  ldap.toml: |
+    {{- .Values.monitoring.grafana.auth.ldap.config | nindent 4 }}
+  {{- end }}
+
+{{- end }}

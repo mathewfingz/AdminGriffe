@@ -1,0 +1,220 @@
+{{- if and .Values.cronJobs.backup.enabled .Values.cronJobs.backup.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-backup-pvc
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup-storage
+  {{- with .Values.cronJobs.backup.persistence.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.cronJobs.backup.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- range .Values.cronJobs.backup.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.cronJobs.backup.persistence.size | quote }}
+  {{- if .Values.cronJobs.backup.persistence.storageClass }}
+  {{- if (eq "-" .Values.cronJobs.backup.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.cronJobs.backup.persistence.storageClass | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.cronJobs.backup.persistence.selector }}
+  selector:
+    {{- toYaml .Values.cronJobs.backup.persistence.selector | nindent 4 }}
+  {{- end }}
+{{- end }}
+
+---
+{{- if and .Values.persistence.enabled (not .Values.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-data-pvc
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: data-storage
+  {{- with .Values.persistence.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- range .Values.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size | quote }}
+  {{- if .Values.persistence.storageClass }}
+  {{- if (eq "-" .Values.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.persistence.selector }}
+  selector:
+    {{- toYaml .Values.persistence.selector | nindent 4 }}
+  {{- end }}
+{{- end }}
+
+---
+{{- if and .Values.redis.persistence.enabled (not .Values.redis.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-redis-data-pvc
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-storage
+  {{- with .Values.redis.persistence.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.redis.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- range .Values.redis.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.redis.persistence.size | quote }}
+  {{- if .Values.redis.persistence.storageClass }}
+  {{- if (eq "-" .Values.redis.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.redis.persistence.storageClass | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.redis.persistence.selector }}
+  selector:
+    {{- toYaml .Values.redis.persistence.selector | nindent 4 }}
+  {{- end }}
+{{- end }}
+
+---
+{{- if and .Values.prometheus.persistence.enabled (not .Values.prometheus.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus-data-pvc
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-storage
+  {{- with .Values.prometheus.persistence.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.prometheus.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- range .Values.prometheus.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.prometheus.persistence.size | quote }}
+  {{- if .Values.prometheus.persistence.storageClass }}
+  {{- if (eq "-" .Values.prometheus.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.prometheus.persistence.storageClass | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.prometheus.persistence.selector }}
+  selector:
+    {{- toYaml .Values.prometheus.persistence.selector | nindent 4 }}
+  {{- end }}
+{{- end }}
+
+---
+{{- if and .Values.grafana.persistence.enabled (not .Values.grafana.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-grafana-data-pvc
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana-storage
+  {{- with .Values.grafana.persistence.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.grafana.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- range .Values.grafana.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.grafana.persistence.size | quote }}
+  {{- if .Values.grafana.persistence.storageClass }}
+  {{- if (eq "-" .Values.grafana.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.grafana.persistence.storageClass | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.grafana.persistence.selector }}
+  selector:
+    {{- toYaml .Values.grafana.persistence.selector | nindent 4 }}
+  {{- end }}
+{{- end }}
+
+---
+{{- if and .Values.alertmanager.persistence.enabled (not .Values.alertmanager.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-alertmanager-data-pvc
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager-storage
+  {{- with .Values.alertmanager.persistence.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.alertmanager.persistence.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  accessModes:
+    {{- range .Values.alertmanager.persistence.accessModes }}
+    - {{ . | quote }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.alertmanager.persistence.size | quote }}
+  {{- if .Values.alertmanager.persistence.storageClass }}
+  {{- if (eq "-" .Values.alertmanager.persistence.storageClass) }}
+  storageClassName: ""
+  {{- else }}
+  storageClassName: {{ .Values.alertmanager.persistence.storageClass | quote }}
+  {{- end }}
+  {{- end }}
+  {{- if .Values.alertmanager.persistence.selector }}
+  selector:
+    {{- toYaml .Values.alertmanager.persistence.selector | nindent 4 }}
+  {{- end }}
+{{- end }}

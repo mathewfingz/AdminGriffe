@@ -1,0 +1,375 @@
+{{- if .Values.kafka.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-kafka-config
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka-config
+data:
+  # Kafka Producer Configuration
+  producer.properties: |
+    # Basic Producer Settings
+    bootstrap.servers={{ .Values.kafka.brokers | join "," }}
+    client.id={{ include "worker-sync.fullname" . }}-producer
+    
+    # Serialization
+    key.serializer=org.apache.kafka.common.serialization.StringSerializer
+    value.serializer=org.apache.kafka.common.serialization.StringSerializer
+    
+    # Performance & Reliability
+    acks={{ .Values.kafka.producer.acks | default "all" }}
+    retries={{ .Values.kafka.producer.retries | default 2147483647 }}
+    max.in.flight.requests.per.connection={{ .Values.kafka.producer.maxInFlightRequestsPerConnection | default 5 }}
+    enable.idempotence={{ .Values.kafka.producer.enableIdempotence | default true }}
+    
+    # Batching & Compression
+    batch.size={{ .Values.kafka.producer.batchSize | default 16384 }}
+    linger.ms={{ .Values.kafka.producer.lingerMs | default 5 }}
+    compression.type={{ .Values.kafka.producer.compressionType | default "snappy" }}
+    
+    # Buffer & Memory
+    buffer.memory={{ .Values.kafka.producer.bufferMemory | default 33554432 }}
+    max.block.ms={{ .Values.kafka.producer.maxBlockMs | default 60000 }}
+    
+    # Request & Timeout Settings
+    request.timeout.ms={{ .Values.kafka.producer.requestTimeoutMs | default 30000 }}
+    delivery.timeout.ms={{ .Values.kafka.producer.deliveryTimeoutMs | default 120000 }}
+    
+    # Partitioning
+    partitioner.class={{ .Values.kafka.producer.partitionerClass | default "org.apache.kafka.clients.producer.internals.DefaultPartitioner" }}
+    
+    {{- if .Values.kafka.security.enabled }}
+    # Security Configuration
+    security.protocol={{ .Values.kafka.security.protocol | default "SASL_SSL" }}
+    sasl.mechanism={{ .Values.kafka.security.saslMechanism | default "PLAIN" }}
+    sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="${KAFKA_USERNAME}" password="${KAFKA_PASSWORD}";
+    
+    {{- if eq .Values.kafka.security.protocol "SSL" "SASL_SSL" }}
+    ssl.truststore.location={{ .Values.kafka.security.ssl.truststoreLocation | default "/etc/ssl/certs/kafka-truststore.jks" }}
+    ssl.truststore.password=${KAFKA_SSL_TRUSTSTORE_PASSWORD}
+    ssl.keystore.location={{ .Values.kafka.security.ssl.keystoreLocation | default "/etc/ssl/certs/kafka-keystore.jks" }}
+    ssl.keystore.password=${KAFKA_SSL_KEYSTORE_PASSWORD}
+    ssl.key.password=${KAFKA_SSL_KEY_PASSWORD}
+    ssl.endpoint.identification.algorithm={{ .Values.kafka.security.ssl.endpointIdentificationAlgorithm | default "" }}
+    {{- end }}
+    {{- end }}
+
+  # Kafka Consumer Configuration
+  consumer.properties: |
+    # Basic Consumer Settings
+    bootstrap.servers={{ .Values.kafka.brokers | join "," }}
+    client.id={{ include "worker-sync.fullname" . }}-consumer
+    group.id={{ .Values.kafka.consumer.groupId | default (printf "%s-sync-group" (include "worker-sync.fullname" .)) }}
+    
+    # Deserialization
+    key.deserializer=org.apache.kafka.common.serialization.StringDeserializer
+    value.deserializer=org.apache.kafka.common.serialization.StringDeserializer
+    
+    # Consumer Behavior
+    auto.offset.reset={{ .Values.kafka.consumer.autoOffsetReset | default "earliest" }}
+    enable.auto.commit={{ .Values.kafka.consumer.enableAutoCommit | default false }}
+    auto.commit.interval.ms={{ .Values.kafka.consumer.autoCommitIntervalMs | default 5000 }}
+    
+    # Session & Heartbeat
+    session.timeout.ms={{ .Values.kafka.consumer.sessionTimeoutMs | default 30000 }}
+    heartbeat.interval.ms={{ .Values.kafka.consumer.heartbeatIntervalMs | default 3000 }}
+    max.poll.interval.ms={{ .Values.kafka.consumer.maxPollIntervalMs | default 300000 }}
+    
+    # Fetch Settings
+    fetch.min.bytes={{ .Values.kafka.consumer.fetchMinBytes | default 1 }}
+    fetch.max.wait.ms={{ .Values.kafka.consumer.fetchMaxWaitMs | default 500 }}
+    max.partition.fetch.bytes={{ .Values.kafka.consumer.maxPartitionFetchBytes | default 1048576 }}
+    max.poll.records={{ .Values.kafka.consumer.maxPollRecords | default 500 }}
+    
+    # Isolation Level
+    isolation.level={{ .Values.kafka.consumer.isolationLevel | default "read_committed" }}
+    
+    {{- if .Values.kafka.security.enabled }}
+    # Security Configuration
+    security.protocol={{ .Values.kafka.security.protocol | default "SASL_SSL" }}
+    sasl.mechanism={{ .Values.kafka.security.saslMechanism | default "PLAIN" }}
+    sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="${KAFKA_USERNAME}" password="${KAFKA_PASSWORD}";
+    
+    {{- if eq .Values.kafka.security.protocol "SSL" "SASL_SSL" }}
+    ssl.truststore.location={{ .Values.kafka.security.ssl.truststoreLocation | default "/etc/ssl/certs/kafka-truststore.jks" }}
+    ssl.truststore.password=${KAFKA_SSL_TRUSTSTORE_PASSWORD}
+    ssl.keystore.location={{ .Values.kafka.security.ssl.keystoreLocation | default "/etc/ssl/certs/kafka-keystore.jks" }}
+    ssl.keystore.password=${KAFKA_SSL_KEYSTORE_PASSWORD}
+    ssl.key.password=${KAFKA_SSL_KEY_PASSWORD}
+    ssl.endpoint.identification.algorithm={{ .Values.kafka.security.ssl.endpointIdentificationAlgorithm | default "" }}
+    {{- end }}
+    {{- end }}
+
+  # Kafka Admin Configuration
+  admin.properties: |
+    # Basic Admin Settings
+    bootstrap.servers={{ .Values.kafka.brokers | join "," }}
+    client.id={{ include "worker-sync.fullname" . }}-admin
+    
+    # Request Settings
+    request.timeout.ms={{ .Values.kafka.admin.requestTimeoutMs | default 30000 }}
+    
+    {{- if .Values.kafka.security.enabled }}
+    # Security Configuration
+    security.protocol={{ .Values.kafka.security.protocol | default "SASL_SSL" }}
+    sasl.mechanism={{ .Values.kafka.security.saslMechanism | default "PLAIN" }}
+    sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="${KAFKA_USERNAME}" password="${KAFKA_PASSWORD}";
+    
+    {{- if eq .Values.kafka.security.protocol "SSL" "SASL_SSL" }}
+    ssl.truststore.location={{ .Values.kafka.security.ssl.truststoreLocation | default "/etc/ssl/certs/kafka-truststore.jks" }}
+    ssl.truststore.password=${KAFKA_SSL_TRUSTSTORE_PASSWORD}
+    ssl.keystore.location={{ .Values.kafka.security.ssl.keystoreLocation | default "/etc/ssl/certs/kafka-keystore.jks" }}
+    ssl.keystore.password=${KAFKA_SSL_KEYSTORE_PASSWORD}
+    ssl.key.password=${KAFKA_SSL_KEY_PASSWORD}
+    ssl.endpoint.identification.algorithm={{ .Values.kafka.security.ssl.endpointIdentificationAlgorithm | default "" }}
+    {{- end }}
+    {{- end }}
+
+  # Topic Configuration
+  topics.yaml: |
+    topics:
+      # CDC Events Topics
+      - name: {{ .Values.kafka.topics.cdcEvents | default "cdc-events" }}
+        partitions: {{ .Values.kafka.topics.cdcEventsPartitions | default 12 }}
+        replicationFactor: {{ .Values.kafka.topics.replicationFactor | default 3 }}
+        config:
+          cleanup.policy: "delete"
+          retention.ms: {{ .Values.kafka.topics.retentionMs | default 604800000 }} # 7 days
+          segment.ms: {{ .Values.kafka.topics.segmentMs | default 86400000 }} # 1 day
+          compression.type: "snappy"
+          min.insync.replicas: {{ .Values.kafka.topics.minInSyncReplicas | default 2 }}
+          unclean.leader.election.enable: false
+          
+      # Audit Events Topics
+      - name: {{ .Values.kafka.topics.auditEvents | default "audit-events" }}
+        partitions: {{ .Values.kafka.topics.auditEventsPartitions | default 8 }}
+        replicationFactor: {{ .Values.kafka.topics.replicationFactor | default 3 }}
+        config:
+          cleanup.policy: "delete"
+          retention.ms: {{ .Values.kafka.topics.auditRetentionMs | default 2592000000 }} # 30 days
+          segment.ms: {{ .Values.kafka.topics.segmentMs | default 86400000 }} # 1 day
+          compression.type: "snappy"
+          min.insync.replicas: {{ .Values.kafka.topics.minInSyncReplicas | default 2 }}
+          unclean.leader.election.enable: false
+          
+      # Sync Status Topics
+      - name: {{ .Values.kafka.topics.syncStatus | default "sync-status" }}
+        partitions: {{ .Values.kafka.topics.syncStatusPartitions | default 4 }}
+        replicationFactor: {{ .Values.kafka.topics.replicationFactor | default 3 }}
+        config:
+          cleanup.policy: "compact,delete"
+          retention.ms: {{ .Values.kafka.topics.syncStatusRetentionMs | default 86400000 }} # 1 day
+          segment.ms: {{ .Values.kafka.topics.segmentMs | default 3600000 }} # 1 hour
+          compression.type: "snappy"
+          min.insync.replicas: {{ .Values.kafka.topics.minInSyncReplicas | default 2 }}
+          delete.retention.ms: 3600000 # 1 hour
+          
+      # Conflict Resolution Topics
+      - name: {{ .Values.kafka.topics.conflicts | default "sync-conflicts" }}
+        partitions: {{ .Values.kafka.topics.conflictsPartitions | default 6 }}
+        replicationFactor: {{ .Values.kafka.topics.replicationFactor | default 3 }}
+        config:
+          cleanup.policy: "delete"
+          retention.ms: {{ .Values.kafka.topics.conflictRetentionMs | default 1209600000 }} # 14 days
+          segment.ms: {{ .Values.kafka.topics.segmentMs | default 86400000 }} # 1 day
+          compression.type: "snappy"
+          min.insync.replicas: {{ .Values.kafka.topics.minInSyncReplicas | default 2 }}
+          unclean.leader.election.enable: false
+          
+      # Dead Letter Queue
+      - name: {{ .Values.kafka.topics.dlq | default "sync-dlq" }}
+        partitions: {{ .Values.kafka.topics.dlqPartitions | default 3 }}
+        replicationFactor: {{ .Values.kafka.topics.replicationFactor | default 3 }}
+        config:
+          cleanup.policy: "delete"
+          retention.ms: {{ .Values.kafka.topics.dlqRetentionMs | default 2592000000 }} # 30 days
+          segment.ms: {{ .Values.kafka.topics.segmentMs | default 86400000 }} # 1 day
+          compression.type: "snappy"
+          min.insync.replicas: {{ .Values.kafka.topics.minInSyncReplicas | default 2 }}
+          unclean.leader.election.enable: false
+
+  # Kafka Connect Configuration (for CDC)
+  connect.properties: |
+    # Basic Connect Settings
+    bootstrap.servers={{ .Values.kafka.brokers | join "," }}
+    group.id={{ .Values.kafka.connect.groupId | default (printf "%s-connect-cluster" (include "worker-sync.fullname" .)) }}
+    
+    # Connect Configuration
+    key.converter={{ .Values.kafka.connect.keyConverter | default "org.apache.kafka.connect.json.JsonConverter" }}
+    value.converter={{ .Values.kafka.connect.valueConverter | default "org.apache.kafka.connect.json.JsonConverter" }}
+    key.converter.schemas.enable={{ .Values.kafka.connect.keyConverterSchemasEnable | default false }}
+    value.converter.schemas.enable={{ .Values.kafka.connect.valueConverterSchemasEnable | default false }}
+    
+    # Internal Topics
+    offset.storage.topic={{ .Values.kafka.connect.offsetStorageTopic | default (printf "%s-connect-offsets" (include "worker-sync.fullname" .)) }}
+    offset.storage.replication.factor={{ .Values.kafka.connect.offsetStorageReplicationFactor | default 3 }}
+    offset.storage.partitions={{ .Values.kafka.connect.offsetStoragePartitions | default 25 }}
+    
+    config.storage.topic={{ .Values.kafka.connect.configStorageTopic | default (printf "%s-connect-configs" (include "worker-sync.fullname" .)) }}
+    config.storage.replication.factor={{ .Values.kafka.connect.configStorageReplicationFactor | default 3 }}
+    
+    status.storage.topic={{ .Values.kafka.connect.statusStorageTopic | default (printf "%s-connect-status" (include "worker-sync.fullname" .)) }}
+    status.storage.replication.factor={{ .Values.kafka.connect.statusStorageReplicationFactor | default 3 }}
+    status.storage.partitions={{ .Values.kafka.connect.statusStoragePartitions | default 5 }}
+    
+    # Connect Worker Settings
+    offset.flush.interval.ms={{ .Values.kafka.connect.offsetFlushIntervalMs | default 10000 }}
+    offset.flush.timeout.ms={{ .Values.kafka.connect.offsetFlushTimeoutMs | default 5000 }}
+    
+    # REST API
+    rest.host.name={{ .Values.kafka.connect.restHostName | default "0.0.0.0" }}
+    rest.port={{ .Values.kafka.connect.restPort | default 8083 }}
+    
+    # Plugin Path
+    plugin.path={{ .Values.kafka.connect.pluginPath | default "/usr/share/java,/usr/share/confluent-hub-components" }}
+    
+    {{- if .Values.kafka.security.enabled }}
+    # Security Configuration
+    security.protocol={{ .Values.kafka.security.protocol | default "SASL_SSL" }}
+    sasl.mechanism={{ .Values.kafka.security.saslMechanism | default "PLAIN" }}
+    sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="${KAFKA_USERNAME}" password="${KAFKA_PASSWORD}";
+    
+    # Producer Security
+    producer.security.protocol={{ .Values.kafka.security.protocol | default "SASL_SSL" }}
+    producer.sasl.mechanism={{ .Values.kafka.security.saslMechanism | default "PLAIN" }}
+    producer.sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="${KAFKA_USERNAME}" password="${KAFKA_PASSWORD}";
+    
+    # Consumer Security
+    consumer.security.protocol={{ .Values.kafka.security.protocol | default "SASL_SSL" }}
+    consumer.sasl.mechanism={{ .Values.kafka.security.saslMechanism | default "PLAIN" }}
+    consumer.sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="${KAFKA_USERNAME}" password="${KAFKA_PASSWORD}";
+    
+    {{- if eq .Values.kafka.security.protocol "SSL" "SASL_SSL" }}
+    ssl.truststore.location={{ .Values.kafka.security.ssl.truststoreLocation | default "/etc/ssl/certs/kafka-truststore.jks" }}
+    ssl.truststore.password=${KAFKA_SSL_TRUSTSTORE_PASSWORD}
+    ssl.keystore.location={{ .Values.kafka.security.ssl.keystoreLocation | default "/etc/ssl/certs/kafka-keystore.jks" }}
+    ssl.keystore.password=${KAFKA_SSL_KEYSTORE_PASSWORD}
+    ssl.key.password=${KAFKA_SSL_KEY_PASSWORD}
+    
+    producer.ssl.truststore.location={{ .Values.kafka.security.ssl.truststoreLocation | default "/etc/ssl/certs/kafka-truststore.jks" }}
+    producer.ssl.truststore.password=${KAFKA_SSL_TRUSTSTORE_PASSWORD}
+    producer.ssl.keystore.location={{ .Values.kafka.security.ssl.keystoreLocation | default "/etc/ssl/certs/kafka-keystore.jks" }}
+    producer.ssl.keystore.password=${KAFKA_SSL_KEYSTORE_PASSWORD}
+    producer.ssl.key.password=${KAFKA_SSL_KEY_PASSWORD}
+    
+    consumer.ssl.truststore.location={{ .Values.kafka.security.ssl.truststoreLocation | default "/etc/ssl/certs/kafka-truststore.jks" }}
+    consumer.ssl.truststore.password=${KAFKA_SSL_TRUSTSTORE_PASSWORD}
+    consumer.ssl.keystore.location={{ .Values.kafka.security.ssl.keystoreLocation | default "/etc/ssl/certs/kafka-keystore.jks" }}
+    consumer.ssl.keystore.password=${KAFKA_SSL_KEYSTORE_PASSWORD}
+    consumer.ssl.key.password=${KAFKA_SSL_KEY_PASSWORD}
+    {{- end }}
+    {{- end }}
+
+  # Schema Registry Configuration (if enabled)
+  {{- if .Values.kafka.schemaRegistry.enabled }}
+  schema-registry.properties: |
+    # Schema Registry Settings
+    kafkastore.bootstrap.servers={{ .Values.kafka.brokers | join "," }}
+    kafkastore.topic={{ .Values.kafka.schemaRegistry.topic | default "_schemas" }}
+    kafkastore.topic.replication.factor={{ .Values.kafka.schemaRegistry.replicationFactor | default 3 }}
+    
+    # Listeners
+    listeners={{ .Values.kafka.schemaRegistry.listeners | default "http://0.0.0.0:8081" }}
+    
+    # Compatibility
+    avro.compatibility.level={{ .Values.kafka.schemaRegistry.compatibilityLevel | default "BACKWARD" }}
+    
+    {{- if .Values.kafka.security.enabled }}
+    # Security Configuration
+    kafkastore.security.protocol={{ .Values.kafka.security.protocol | default "SASL_SSL" }}
+    kafkastore.sasl.mechanism={{ .Values.kafka.security.saslMechanism | default "PLAIN" }}
+    kafkastore.sasl.jaas.config=org.apache.kafka.common.security.plain.PlainLoginModule required username="${KAFKA_USERNAME}" password="${KAFKA_PASSWORD}";
+    
+    {{- if eq .Values.kafka.security.protocol "SSL" "SASL_SSL" }}
+    kafkastore.ssl.truststore.location={{ .Values.kafka.security.ssl.truststoreLocation | default "/etc/ssl/certs/kafka-truststore.jks" }}
+    kafkastore.ssl.truststore.password=${KAFKA_SSL_TRUSTSTORE_PASSWORD}
+    kafkastore.ssl.keystore.location={{ .Values.kafka.security.ssl.keystoreLocation | default "/etc/ssl/certs/kafka-keystore.jks" }}
+    kafkastore.ssl.keystore.password=${KAFKA_SSL_KEYSTORE_PASSWORD}
+    kafkastore.ssl.key.password=${KAFKA_SSL_KEY_PASSWORD}
+    {{- end }}
+    {{- end }}
+  {{- end }}
+
+  # Debezium Connector Configurations
+  debezium-postgres.json: |
+    {
+      "name": "{{ include "worker-sync.fullname" . }}-postgres-connector",
+      "config": {
+        "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+        "tasks.max": "{{ .Values.kafka.debezium.postgres.tasksMax | default 1 }}",
+        "database.hostname": "{{ .Values.postgresql.host }}",
+        "database.port": "{{ .Values.postgresql.port }}",
+        "database.user": "{{ .Values.postgresql.username }}",
+        "database.password": "${POSTGRES_PASSWORD}",
+        "database.dbname": "{{ .Values.postgresql.database }}",
+        "database.server.name": "{{ .Values.kafka.debezium.postgres.serverName | default "postgres-server" }}",
+        "table.include.list": "{{ .Values.kafka.debezium.postgres.tableIncludeList | default "public.*" }}",
+        "plugin.name": "{{ .Values.kafka.debezium.postgres.pluginName | default "pgoutput" }}",
+        "slot.name": "{{ .Values.kafka.debezium.postgres.slotName | default "debezium_slot" }}",
+        "publication.name": "{{ .Values.kafka.debezium.postgres.publicationName | default "debezium_publication" }}",
+        "snapshot.mode": "{{ .Values.kafka.debezium.postgres.snapshotMode | default "initial" }}",
+        "topic.prefix": "{{ .Values.kafka.debezium.postgres.topicPrefix | default "dbz-postgres" }}",
+        "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": false,
+        "value.converter.schemas.enable": false,
+        "transforms": "route",
+        "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
+        "transforms.route.regex": "([^.]+)\\.([^.]+)\\.([^.]+)",
+        "transforms.route.replacement": "{{ .Values.kafka.topics.cdcEvents | default "cdc-events" }}"
+      }
+    }
+
+  debezium-mysql.json: |
+    {
+      "name": "{{ include "worker-sync.fullname" . }}-mysql-connector",
+      "config": {
+        "connector.class": "io.debezium.connector.mysql.MySqlConnector",
+        "tasks.max": "{{ .Values.kafka.debezium.mysql.tasksMax | default 1 }}",
+        "database.hostname": "{{ .Values.mysql.host }}",
+        "database.port": "{{ .Values.mysql.port }}",
+        "database.user": "{{ .Values.mysql.username }}",
+        "database.password": "${MYSQL_PASSWORD}",
+        "database.server.id": "{{ .Values.kafka.debezium.mysql.serverId | default 184054 }}",
+        "database.server.name": "{{ .Values.kafka.debezium.mysql.serverName | default "mysql-server" }}",
+        "table.include.list": "{{ .Values.kafka.debezium.mysql.tableIncludeList | default ".*\\..*" }}",
+        "database.include.list": "{{ .Values.kafka.debezium.mysql.databaseIncludeList | default .Values.mysql.database }}",
+        "snapshot.mode": "{{ .Values.kafka.debezium.mysql.snapshotMode | default "initial" }}",
+        "topic.prefix": "{{ .Values.kafka.debezium.mysql.topicPrefix | default "dbz-mysql" }}",
+        "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": false,
+        "value.converter.schemas.enable": false,
+        "transforms": "route",
+        "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
+        "transforms.route.regex": "([^.]+)\\.([^.]+)\\.([^.]+)",
+        "transforms.route.replacement": "{{ .Values.kafka.topics.cdcEvents | default "cdc-events" }}"
+      }
+    }
+
+  debezium-mongodb.json: |
+    {
+      "name": "{{ include "worker-sync.fullname" . }}-mongodb-connector",
+      "config": {
+        "connector.class": "io.debezium.connector.mongodb.MongoDbConnector",
+        "tasks.max": "{{ .Values.kafka.debezium.mongodb.tasksMax | default 1 }}",
+        "mongodb.hosts": "{{ .Values.mongodb.host }}:{{ .Values.mongodb.port }}",
+        "mongodb.name": "{{ .Values.kafka.debezium.mongodb.serverName | default "mongodb-server" }}",
+        "mongodb.user": "{{ .Values.mongodb.username }}",
+        "mongodb.password": "${MONGODB_PASSWORD}",
+        "database.include.list": "{{ .Values.kafka.debezium.mongodb.databaseIncludeList | default .Values.mongodb.database }}",
+        "collection.include.list": "{{ .Values.kafka.debezium.mongodb.collectionIncludeList | default ".*\\..*" }}",
+        "snapshot.mode": "{{ .Values.kafka.debezium.mongodb.snapshotMode | default "initial" }}",
+        "topic.prefix": "{{ .Values.kafka.debezium.mongodb.topicPrefix | default "dbz-mongodb" }}",
+        "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+        "key.converter.schemas.enable": false,
+        "value.converter.schemas.enable": false,
+        "transforms": "route",
+        "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
+        "transforms.route.regex": "([^.]+)\\.([^.]+)",
+        "transforms.route.replacement": "{{ .Values.kafka.topics.cdcEvents | default "cdc-events" }}"
+      }
+    }
+{{- end }}

@@ -1,0 +1,90 @@
+{{- if .Values.monitoring.alertmanager.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-alertmanager
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+  {{- with .Values.monitoring.alertmanager.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.monitoring.alertmanager.service.type | default "ClusterIP" }}
+  {{- if and (eq .Values.monitoring.alertmanager.service.type "LoadBalancer") .Values.monitoring.alertmanager.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.monitoring.alertmanager.service.loadBalancerIP }}
+  {{- end }}
+  {{- if and (eq .Values.monitoring.alertmanager.service.type "LoadBalancer") .Values.monitoring.alertmanager.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- range .Values.monitoring.alertmanager.service.loadBalancerSourceRanges }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if and (eq .Values.monitoring.alertmanager.service.type "ClusterIP") .Values.monitoring.alertmanager.service.clusterIP }}
+  clusterIP: {{ .Values.monitoring.alertmanager.service.clusterIP }}
+  {{- end }}
+  {{- if .Values.monitoring.alertmanager.service.externalIPs }}
+  externalIPs:
+    {{- range .Values.monitoring.alertmanager.service.externalIPs }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  ports:
+    - port: {{ .Values.monitoring.alertmanager.service.port | default 9093 }}
+      targetPort: {{ .Values.monitoring.alertmanager.service.targetPort | default "web" }}
+      protocol: TCP
+      name: web
+      {{- if and (or (eq .Values.monitoring.alertmanager.service.type "NodePort") (eq .Values.monitoring.alertmanager.service.type "LoadBalancer")) .Values.monitoring.alertmanager.service.nodePort }}
+      nodePort: {{ .Values.monitoring.alertmanager.service.nodePort }}
+      {{- end }}
+    {{- if .Values.monitoring.alertmanager.clustering.enabled }}
+    - port: {{ .Values.monitoring.alertmanager.clustering.port | default 9094 }}
+      targetPort: cluster
+      protocol: TCP
+      name: cluster
+    {{- end }}
+    {{- with .Values.monitoring.alertmanager.service.additionalPorts }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  selector:
+    {{- include "worker-sync.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+  {{- if .Values.monitoring.alertmanager.service.sessionAffinity }}
+  sessionAffinity: {{ .Values.monitoring.alertmanager.service.sessionAffinity }}
+  {{- end }}
+  {{- if .Values.monitoring.alertmanager.service.sessionAffinityConfig }}
+  sessionAffinityConfig:
+    {{- toYaml .Values.monitoring.alertmanager.service.sessionAffinityConfig | nindent 4 }}
+  {{- end }}
+---
+{{- if .Values.monitoring.alertmanager.clustering.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-alertmanager-headless
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+  {{- with .Values.monitoring.alertmanager.service.headless.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - port: {{ .Values.monitoring.alertmanager.service.port | default 9093 }}
+      targetPort: web
+      protocol: TCP
+      name: web
+    - port: {{ .Values.monitoring.alertmanager.clustering.port | default 9094 }}
+      targetPort: cluster
+      protocol: TCP
+      name: cluster
+  selector:
+    {{- include "worker-sync.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+{{- end }}
+{{- end }}

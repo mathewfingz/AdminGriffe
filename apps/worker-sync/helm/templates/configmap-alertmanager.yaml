@@ -1,0 +1,311 @@
+{{- if .Values.monitoring.alertmanager.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-alertmanager-config
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: {{ .Values.monitoring.alertmanager.config.global.smtpSmarthost | default "localhost:587" | quote }}
+      smtp_from: {{ .Values.monitoring.alertmanager.config.global.smtpFrom | default "alertmanager@example.com" | quote }}
+      smtp_auth_username: {{ .Values.monitoring.alertmanager.config.global.smtpAuthUsername | default "" | quote }}
+      smtp_auth_password: {{ .Values.monitoring.alertmanager.config.global.smtpAuthPassword | default "" | quote }}
+      smtp_require_tls: {{ .Values.monitoring.alertmanager.config.global.smtpRequireTls | default true }}
+      slack_api_url: {{ .Values.monitoring.alertmanager.config.global.slackApiUrl | default "" | quote }}
+      pagerduty_url: {{ .Values.monitoring.alertmanager.config.global.pagerdutyUrl | default "https://events.pagerduty.com/v2/enqueue" | quote }}
+      resolve_timeout: {{ .Values.monitoring.alertmanager.config.global.resolveTimeout | default "5m" | quote }}
+
+    templates:
+      - '/etc/alertmanager/templates/*.tmpl'
+
+    route:
+      group_by: {{ .Values.monitoring.alertmanager.config.route.groupBy | default (list "alertname" "cluster" "service") | toYaml | nindent 8 }}
+      group_wait: {{ .Values.monitoring.alertmanager.config.route.groupWait | default "10s" | quote }}
+      group_interval: {{ .Values.monitoring.alertmanager.config.route.groupInterval | default "10s" | quote }}
+      repeat_interval: {{ .Values.monitoring.alertmanager.config.route.repeatInterval | default "1h" | quote }}
+      receiver: {{ .Values.monitoring.alertmanager.config.route.receiver | default "web.hook" | quote }}
+      routes:
+        # Critical alerts - immediate notification
+        - match:
+            severity: critical
+          receiver: critical-alerts
+          group_wait: 0s
+          group_interval: 5m
+          repeat_interval: 12h
+          continue: true
+
+        # Warning alerts - less frequent notifications
+        - match:
+            severity: warning
+          receiver: warning-alerts
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 4h
+          continue: true
+
+        # Worker-sync specific alerts
+        - match:
+            service: worker-sync
+          receiver: worker-sync-alerts
+          group_wait: 10s
+          group_interval: 5m
+          repeat_interval: 2h
+          continue: true
+
+        # Infrastructure alerts
+        - match_re:
+            alertname: ^(NodeDown|NodeMemoryHigh|NodeCPUHigh|NodeDiskSpaceHigh)$
+          receiver: infrastructure-alerts
+          group_wait: 30s
+          group_interval: 10m
+          repeat_interval: 6h
+
+        # Database alerts
+        - match_re:
+            alertname: ^(PostgreSQLDown|MySQLDown|MongoDBDown|RedisDown)$
+          receiver: database-alerts
+          group_wait: 15s
+          group_interval: 5m
+          repeat_interval: 1h
+
+        {{- with .Values.monitoring.alertmanager.config.route.routes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+
+    inhibit_rules:
+      # Inhibit warning alerts if critical alert is firing
+      - source_match:
+          severity: critical
+        target_match:
+          severity: warning
+        equal: ['alertname', 'cluster', 'service']
+
+      # Inhibit sync lag warnings if sync is down
+      - source_match:
+          alertname: WorkerSyncDown
+        target_match:
+          alertname: WorkerSyncHighLag
+        equal: ['instance']
+
+      {{- with .Values.monitoring.alertmanager.config.inhibitRules }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+
+    receivers:
+      - name: 'web.hook'
+        webhook_configs:
+          - url: {{ .Values.monitoring.alertmanager.config.receivers.webhook.url | default "http://localhost:5001/" | quote }}
+            send_resolved: true
+
+      - name: 'critical-alerts'
+        {{- if .Values.monitoring.alertmanager.config.receivers.email.enabled }}
+        email_configs:
+          - to: {{ .Values.monitoring.alertmanager.config.receivers.email.to | quote }}
+            subject: '[CRITICAL] {{ "{{ .GroupLabels.alertname }}" }} - {{ "{{ .GroupLabels.cluster }}" }}'
+            body: |
+              {{ "{{ range .Alerts }}" }}
+              Alert: {{ "{{ .Annotations.summary }}" }}
+              Description: {{ "{{ .Annotations.description }}" }}
+              Labels: {{ "{{ range .Labels.SortedPairs }}" }} {{ "{{ .Name }}" }}={{ "{{ .Value }}" }} {{ "{{ end }}" }}
+              {{ "{{ end }}" }}
+            headers:
+              Subject: '[CRITICAL] {{ "{{ .GroupLabels.alertname }}" }} - {{ "{{ .GroupLabels.cluster }}" }}'
+        {{- end }}
+        {{- if .Values.monitoring.alertmanager.config.receivers.slack.enabled }}
+        slack_configs:
+          - api_url: {{ .Values.monitoring.alertmanager.config.receivers.slack.apiUrl | quote }}
+            channel: {{ .Values.monitoring.alertmanager.config.receivers.slack.channel | default "#alerts-critical" | quote }}
+            title: '[CRITICAL] {{ "{{ .GroupLabels.alertname }}" }}'
+            text: |
+              {{ "{{ range .Alerts }}" }}
+              *Alert:* {{ "{{ .Annotations.summary }}" }}
+              *Description:* {{ "{{ .Annotations.description }}" }}
+              *Severity:* {{ "{{ .Labels.severity }}" }}
+              *Instance:* {{ "{{ .Labels.instance }}" }}
+              {{ "{{ end }}" }}
+            send_resolved: true
+        {{- end }}
+        {{- if .Values.monitoring.alertmanager.config.receivers.pagerduty.enabled }}
+        pagerduty_configs:
+          - routing_key: {{ .Values.monitoring.alertmanager.config.receivers.pagerduty.routingKey | quote }}
+            description: '{{ "{{ .GroupLabels.alertname }}" }} - {{ "{{ .GroupLabels.cluster }}" }}'
+        {{- end }}
+
+      - name: 'warning-alerts'
+        {{- if .Values.monitoring.alertmanager.config.receivers.email.enabled }}
+        email_configs:
+          - to: {{ .Values.monitoring.alertmanager.config.receivers.email.to | quote }}
+            subject: '[WARNING] {{ "{{ .GroupLabels.alertname }}" }} - {{ "{{ .GroupLabels.cluster }}" }}'
+            body: |
+              {{ "{{ range .Alerts }}" }}
+              Alert: {{ "{{ .Annotations.summary }}" }}
+              Description: {{ "{{ .Annotations.description }}" }}
+              Labels: {{ "{{ range .Labels.SortedPairs }}" }} {{ "{{ .Name }}" }}={{ "{{ .Value }}" }} {{ "{{ end }}" }}
+              {{ "{{ end }}" }}
+        {{- end }}
+        {{- if .Values.monitoring.alertmanager.config.receivers.slack.enabled }}
+        slack_configs:
+          - api_url: {{ .Values.monitoring.alertmanager.config.receivers.slack.apiUrl | quote }}
+            channel: {{ .Values.monitoring.alertmanager.config.receivers.slack.channel | default "#alerts-warning" | quote }}
+            title: '[WARNING] {{ "{{ .GroupLabels.alertname }}" }}'
+            text: |
+              {{ "{{ range .Alerts }}" }}
+              *Alert:* {{ "{{ .Annotations.summary }}" }}
+              *Description:* {{ "{{ .Annotations.description }}" }}
+              *Severity:* {{ "{{ .Labels.severity }}" }}
+              *Instance:* {{ "{{ .Labels.instance }}" }}
+              {{ "{{ end }}" }}
+            send_resolved: true
+        {{- end }}
+
+      - name: 'worker-sync-alerts'
+        {{- if .Values.monitoring.alertmanager.config.receivers.email.enabled }}
+        email_configs:
+          - to: {{ .Values.monitoring.alertmanager.config.receivers.email.to | quote }}
+            subject: '[WORKER-SYNC] {{ "{{ .GroupLabels.alertname }}" }}'
+            body: |
+              Worker-Sync Alert Details:
+              {{ "{{ range .Alerts }}" }}
+              Alert: {{ "{{ .Annotations.summary }}" }}
+              Description: {{ "{{ .Annotations.description }}" }}
+              Sync Lag: {{ "{{ .Labels.sync_lag }}" }}ms
+              Source: {{ "{{ .Labels.source }}" }}
+              Target: {{ "{{ .Labels.target }}" }}
+              Instance: {{ "{{ .Labels.instance }}" }}
+              {{ "{{ end }}" }}
+        {{- end }}
+        {{- if .Values.monitoring.alertmanager.config.receivers.slack.enabled }}
+        slack_configs:
+          - api_url: {{ .Values.monitoring.alertmanager.config.receivers.slack.apiUrl | quote }}
+            channel: {{ .Values.monitoring.alertmanager.config.receivers.slack.workerSyncChannel | default "#worker-sync-alerts" | quote }}
+            title: '[WORKER-SYNC] {{ "{{ .GroupLabels.alertname }}" }}'
+            text: |
+              {{ "{{ range .Alerts }}" }}
+              *Alert:* {{ "{{ .Annotations.summary }}" }}
+              *Description:* {{ "{{ .Annotations.description }}" }}
+              *Sync Lag:* {{ "{{ .Labels.sync_lag }}" }}ms
+              *Source:* {{ "{{ .Labels.source }}" }}
+              *Target:* {{ "{{ .Labels.target }}" }}
+              *Instance:* {{ "{{ .Labels.instance }}" }}
+              {{ "{{ end }}" }}
+            send_resolved: true
+        {{- end }}
+
+      - name: 'infrastructure-alerts'
+        {{- if .Values.monitoring.alertmanager.config.receivers.email.enabled }}
+        email_configs:
+          - to: {{ .Values.monitoring.alertmanager.config.receivers.email.infrastructureTo | default .Values.monitoring.alertmanager.config.receivers.email.to | quote }}
+            subject: '[INFRASTRUCTURE] {{ "{{ .GroupLabels.alertname }}" }}'
+            body: |
+              Infrastructure Alert:
+              {{ "{{ range .Alerts }}" }}
+              Alert: {{ "{{ .Annotations.summary }}" }}
+              Description: {{ "{{ .Annotations.description }}" }}
+              Node: {{ "{{ .Labels.instance }}" }}
+              {{ "{{ end }}" }}
+        {{- end }}
+        {{- if .Values.monitoring.alertmanager.config.receivers.slack.enabled }}
+        slack_configs:
+          - api_url: {{ .Values.monitoring.alertmanager.config.receivers.slack.apiUrl | quote }}
+            channel: {{ .Values.monitoring.alertmanager.config.receivers.slack.infrastructureChannel | default "#infrastructure-alerts" | quote }}
+            title: '[INFRASTRUCTURE] {{ "{{ .GroupLabels.alertname }}" }}'
+            text: |
+              {{ "{{ range .Alerts }}" }}
+              *Alert:* {{ "{{ .Annotations.summary }}" }}
+              *Description:* {{ "{{ .Annotations.description }}" }}
+              *Node:* {{ "{{ .Labels.instance }}" }}
+              {{ "{{ end }}" }}
+            send_resolved: true
+        {{- end }}
+
+      - name: 'database-alerts'
+        {{- if .Values.monitoring.alertmanager.config.receivers.email.enabled }}
+        email_configs:
+          - to: {{ .Values.monitoring.alertmanager.config.receivers.email.databaseTo | default .Values.monitoring.alertmanager.config.receivers.email.to | quote }}
+            subject: '[DATABASE] {{ "{{ .GroupLabels.alertname }}" }}'
+            body: |
+              Database Alert:
+              {{ "{{ range .Alerts }}" }}
+              Alert: {{ "{{ .Annotations.summary }}" }}
+              Description: {{ "{{ .Annotations.description }}" }}
+              Database: {{ "{{ .Labels.database }}" }}
+              Instance: {{ "{{ .Labels.instance }}" }}
+              {{ "{{ end }}" }}
+        {{- end }}
+        {{- if .Values.monitoring.alertmanager.config.receivers.slack.enabled }}
+        slack_configs:
+          - api_url: {{ .Values.monitoring.alertmanager.config.receivers.slack.apiUrl | quote }}
+            channel: {{ .Values.monitoring.alertmanager.config.receivers.slack.databaseChannel | default "#database-alerts" | quote }}
+            title: '[DATABASE] {{ "{{ .GroupLabels.alertname }}" }}'
+            text: |
+              {{ "{{ range .Alerts }}" }}
+              *Alert:* {{ "{{ .Annotations.summary }}" }}
+              *Description:* {{ "{{ .Annotations.description }}" }}
+              *Database:* {{ "{{ .Labels.database }}" }}
+              *Instance:* {{ "{{ .Labels.instance }}" }}
+              {{ "{{ end }}" }}
+            send_resolved: true
+        {{- end }}
+
+      {{- with .Values.monitoring.alertmanager.config.receivers.custom }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+
+  templates.tmpl: |
+    {{ "{{ define \"slack.default.title\" }}" }}
+    [{{ "{{ .Status | toUpper }}" }}{{ "{{ if eq .Status \"firing\" }}" }}:{{ "{{ .Alerts.Firing | len }}" }}{{ "{{ end }}" }}] {{ "{{ .GroupLabels.SortedPairs.Values | join \" \" }}" }} {{ "{{ if gt (len .GroupLabels) 0 }}" }}({{ "{{ range .GroupLabels.SortedPairs }}" }}{{ "{{ .Name }}" }}={{ "{{ .Value }}" }} {{ "{{ end }}" }}){{ "{{ end }}" }}
+    {{ "{{ end }}" }}
+
+    {{ "{{ define \"slack.default.text\" }}" }}
+    {{ "{{ range .Alerts }}" }}
+    *Alert:* {{ "{{ .Annotations.title }}" }}{{ "{{ if .Labels.severity }}" }} - `{{ "{{ .Labels.severity }}" }}`{{ "{{ end }}" }}
+    *Description:* {{ "{{ .Annotations.description }}" }}
+    *Details:*
+      {{ "{{ range .Labels.SortedPairs }}" }}• *{{ "{{ .Name }}" }}:* `{{ "{{ .Value }}" }}`
+      {{ "{{ end }}" }}
+    {{ "{{ end }}" }}
+    {{ "{{ end }}" }}
+
+    {{ "{{ define \"email.default.subject\" }}" }}
+    [{{ "{{ .Status | toUpper }}" }}{{ "{{ if eq .Status \"firing\" }}" }}:{{ "{{ .Alerts.Firing | len }}" }}{{ "{{ end }}" }}] {{ "{{ .GroupLabels.SortedPairs.Values | join \" \" }}" }}
+    {{ "{{ end }}" }}
+
+    {{ "{{ define \"email.default.html\" }}" }}
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="UTF-8">
+    <style>
+    body { font-family: Arial, sans-serif; }
+    .alert { margin: 20px 0; padding: 15px; border-left: 5px solid; }
+    .critical { border-color: #d32f2f; background-color: #ffebee; }
+    .warning { border-color: #f57c00; background-color: #fff3e0; }
+    .info { border-color: #1976d2; background-color: #e3f2fd; }
+    .resolved { border-color: #388e3c; background-color: #e8f5e8; }
+    </style>
+    </head>
+    <body>
+    <h2>Alert Notification</h2>
+    {{ "{{ range .Alerts }}" }}
+    <div class="alert {{ "{{ .Labels.severity }}" }}{{ "{{ if eq .Status \"resolved\" }}" }} resolved{{ "{{ end }}" }}">
+      <h3>{{ "{{ .Annotations.summary }}" }}</h3>
+      <p><strong>Description:</strong> {{ "{{ .Annotations.description }}" }}</p>
+      <p><strong>Status:</strong> {{ "{{ .Status }}" }}</p>
+      <p><strong>Started:</strong> {{ "{{ .StartsAt }}" }}</p>
+      {{ "{{ if .EndsAt }}" }}<p><strong>Ended:</strong> {{ "{{ .EndsAt }}" }}</p>{{ "{{ end }}" }}
+      <h4>Labels:</h4>
+      <ul>
+      {{ "{{ range .Labels.SortedPairs }}" }}
+        <li><strong>{{ "{{ .Name }}" }}:</strong> {{ "{{ .Value }}" }}</li>
+      {{ "{{ end }}" }}
+      </ul>
+    </div>
+    {{ "{{ end }}" }}
+    </body>
+    </html>
+    {{ "{{ end }}" }}
+
+{{- end }}

@@ -1,0 +1,142 @@
+{{- if .Values.monitoring.nodeExporter.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-node-exporter
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+spec:
+  selector:
+    matchLabels:
+      {{- include "worker-sync.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node-exporter
+  template:
+    metadata:
+      labels:
+        {{- include "worker-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node-exporter
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.monitoring.nodeExporter.port | default 9100 }}"
+        prometheus.io/path: "/metrics"
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      hostNetwork: {{ .Values.monitoring.nodeExporter.hostNetwork | default true }}
+      hostPID: {{ .Values.monitoring.nodeExporter.hostPID | default true }}
+      {{- if .Values.monitoring.nodeExporter.hostNetwork }}
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+        - name: node-exporter
+          image: "{{ .Values.monitoring.nodeExporter.image.repository }}:{{ .Values.monitoring.nodeExporter.image.tag | default "v1.8.2" }}"
+          imagePullPolicy: {{ .Values.monitoring.nodeExporter.image.pullPolicy | default "IfNotPresent" }}
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --web.listen-address=0.0.0.0:{{ .Values.monitoring.nodeExporter.port | default 9100 }}
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+            - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$
+            {{- if .Values.monitoring.nodeExporter.collectors.enabled }}
+            {{- range .Values.monitoring.nodeExporter.collectors.list }}
+            - --collector.{{ . }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.monitoring.nodeExporter.collectors.disabled }}
+            {{- range .Values.monitoring.nodeExporter.collectors.disabledList }}
+            - --no-collector.{{ . }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.monitoring.nodeExporter.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.monitoring.nodeExporter.port | default 9100 }}
+              protocol: TCP
+              {{- if .Values.monitoring.nodeExporter.hostNetwork }}
+              hostPort: {{ .Values.monitoring.nodeExporter.port | default 9100 }}
+              {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: {{ .Values.monitoring.nodeExporter.livenessProbe.initialDelaySeconds | default 30 }}
+            periodSeconds: {{ .Values.monitoring.nodeExporter.livenessProbe.periodSeconds | default 30 }}
+            timeoutSeconds: {{ .Values.monitoring.nodeExporter.livenessProbe.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.monitoring.nodeExporter.livenessProbe.failureThreshold | default 3 }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: metrics
+            initialDelaySeconds: {{ .Values.monitoring.nodeExporter.readinessProbe.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ .Values.monitoring.nodeExporter.readinessProbe.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .Values.monitoring.nodeExporter.readinessProbe.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.monitoring.nodeExporter.readinessProbe.failureThreshold | default 3 }}
+          resources:
+            {{- toYaml .Values.monitoring.nodeExporter.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: root
+              mountPath: /host/root
+              mountPropagation: HostToContainer
+              readOnly: true
+            {{- if .Values.monitoring.nodeExporter.extraVolumeMounts }}
+            {{- toYaml .Values.monitoring.nodeExporter.extraVolumeMounts | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: root
+          hostPath:
+            path: /
+        {{- if .Values.monitoring.nodeExporter.extraVolumes }}
+        {{- toYaml .Values.monitoring.nodeExporter.extraVolumes | nindent 8 }}
+        {{- end }}
+      {{- with .Values.monitoring.nodeExporter.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.monitoring.nodeExporter.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.monitoring.nodeExporter.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.monitoring.nodeExporter.priorityClassName }}
+      priorityClassName: {{ .Values.monitoring.nodeExporter.priorityClassName }}
+      {{- end }}
+  updateStrategy:
+    type: {{ .Values.monitoring.nodeExporter.updateStrategy.type | default "RollingUpdate" }}
+    {{- if eq (.Values.monitoring.nodeExporter.updateStrategy.type | default "RollingUpdate") "RollingUpdate" }}
+    rollingUpdate:
+      maxUnavailable: {{ .Values.monitoring.nodeExporter.updateStrategy.rollingUpdate.maxUnavailable | default "1" }}
+    {{- end }}
+{{- end }}

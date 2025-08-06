@@ -1,0 +1,70 @@
+{{- if .Values.monitoring.grafana.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-grafana
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+  {{- with .Values.monitoring.grafana.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.monitoring.grafana.service.type }}
+  {{- if and (eq .Values.monitoring.grafana.service.type "LoadBalancer") .Values.monitoring.grafana.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.monitoring.grafana.service.loadBalancerIP }}
+  {{- end }}
+  {{- if and (eq .Values.monitoring.grafana.service.type "LoadBalancer") .Values.monitoring.grafana.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- range .Values.monitoring.grafana.service.loadBalancerSourceRanges }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if and (eq .Values.monitoring.grafana.service.type "ClusterIP") .Values.monitoring.grafana.service.clusterIP }}
+  clusterIP: {{ .Values.monitoring.grafana.service.clusterIP }}
+  {{- end }}
+  {{- if .Values.monitoring.grafana.service.externalIPs }}
+  externalIPs:
+    {{- range .Values.monitoring.grafana.service.externalIPs }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  ports:
+    - port: {{ .Values.monitoring.grafana.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+      {{- if and (or (eq .Values.monitoring.grafana.service.type "NodePort") (eq .Values.monitoring.grafana.service.type "LoadBalancer")) .Values.monitoring.grafana.service.nodePort }}
+      nodePort: {{ .Values.monitoring.grafana.service.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "worker-sync.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+---
+{{- if .Values.monitoring.grafana.service.headless.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-grafana-headless
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+  {{- with .Values.monitoring.grafana.service.headless.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    - port: {{ .Values.monitoring.grafana.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "worker-sync.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+{{- end }}
+{{- end }}

@@ -1,0 +1,379 @@
+{{- if .Values.initJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-init
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: init-job
+  {{- with .Values.initJob.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.initJob.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  backoffLimit: {{ .Values.initJob.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.initJob.activeDeadlineSeconds }}
+  {{- if .Values.initJob.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ .Values.initJob.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "worker-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: init-job
+      {{- with .Values.initJob.podLabels }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.initJob.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: {{ .Values.initJob.restartPolicy }}
+      serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.initJob.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.initJob.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.initJob.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.initJob.securityContext.enabled }}
+      securityContext:
+        {{- omit .Values.initJob.securityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: init-databases
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting database initialization..."
+              
+              # Wait for databases to be ready
+              echo "Waiting for PostgreSQL..."
+              until pg_isready -h {{ .Values.databases.postgresql.host }} -p {{ .Values.databases.postgresql.port }} -U {{ .Values.databases.postgresql.username }}; do
+                echo "PostgreSQL is unavailable - sleeping"
+                sleep 2
+              done
+              echo "PostgreSQL is ready!"
+              
+              echo "Waiting for MySQL..."
+              until mysqladmin ping -h {{ .Values.databases.mysql.host }} -P {{ .Values.databases.mysql.port }} -u {{ .Values.databases.mysql.username }} --silent; do
+                echo "MySQL is unavailable - sleeping"
+                sleep 2
+              done
+              echo "MySQL is ready!"
+              
+              echo "Waiting for MongoDB..."
+              until mongosh --host {{ .Values.databases.mongodb.host }}:{{ .Values.databases.mongodb.port }} --eval "db.adminCommand('ping')" --quiet; do
+                echo "MongoDB is unavailable - sleeping"
+                sleep 2
+              done
+              echo "MongoDB is ready!"
+              
+              # Initialize audit schemas
+              echo "Creating audit schemas..."
+              
+              # PostgreSQL audit schema
+              PGPASSWORD="${POSTGRES_PASSWORD}" psql -h {{ .Values.databases.postgresql.host }} -p {{ .Values.databases.postgresql.port }} -U {{ .Values.databases.postgresql.username }} -d {{ .Values.databases.postgresql.database }} << 'EOF'
+              CREATE TABLE IF NOT EXISTS audit_log (
+                id           BIGSERIAL PRIMARY KEY,
+                db_engine    TEXT NOT NULL,
+                schema_name  TEXT,
+                table_name   TEXT,
+                operation    TEXT CHECK (operation IN ('INSERT','UPDATE','DELETE')),
+                primary_key  JSONB,
+                diff_old     JSONB,
+                diff_new     JSONB,
+                executed_by  TEXT,
+                client_ip    INET,
+                executed_at  TIMESTAMPTZ DEFAULT now(),
+                signature    BYTEA
+              );
+              
+              CREATE INDEX IF NOT EXISTS idx_audit_log_executed_at ON audit_log(executed_at);
+              CREATE INDEX IF NOT EXISTS idx_audit_log_table_name ON audit_log(table_name);
+              CREATE INDEX IF NOT EXISTS idx_audit_log_operation ON audit_log(operation);
+              
+              CREATE OR REPLACE FUNCTION trg_audit() RETURNS trigger AS $$
+              BEGIN
+                IF (TG_OP = 'DELETE') THEN
+                  INSERT INTO audit_log(db_engine, schema_name, table_name, operation, primary_key, diff_old, executed_by)
+                  VALUES ('postgresql', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP, row_to_json(OLD), row_to_json(OLD), current_user);
+                  RETURN OLD;
+                ELSIF (TG_OP = 'UPDATE') THEN
+                  INSERT INTO audit_log(db_engine, schema_name, table_name, operation, primary_key, diff_old, diff_new, executed_by)
+                  VALUES ('postgresql', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP, row_to_json(NEW), row_to_json(OLD), row_to_json(NEW), current_user);
+                  RETURN NEW;
+                ELSE
+                  INSERT INTO audit_log(db_engine, schema_name, table_name, operation, primary_key, diff_new, executed_by)
+                  VALUES ('postgresql', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP, row_to_json(NEW), row_to_json(NEW), current_user);
+                  RETURN NEW;
+                END IF;
+              END;
+              $$ LANGUAGE plpgsql;
+              EOF
+              
+              # MySQL audit schema
+              mysql -h {{ .Values.databases.mysql.host }} -P {{ .Values.databases.mysql.port }} -u {{ .Values.databases.mysql.username }} -p"${MYSQL_PASSWORD}" {{ .Values.databases.mysql.database }} << 'EOF'
+              CREATE TABLE IF NOT EXISTS audit_log (
+                id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+                db_engine    VARCHAR(50) NOT NULL,
+                schema_name  VARCHAR(255),
+                table_name   VARCHAR(255),
+                operation    ENUM('INSERT','UPDATE','DELETE'),
+                primary_key  JSON,
+                diff_old     JSON,
+                diff_new     JSON,
+                executed_by  VARCHAR(255),
+                client_ip    VARCHAR(45),
+                executed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                signature    BLOB,
+                INDEX idx_audit_log_executed_at (executed_at),
+                INDEX idx_audit_log_table_name (table_name),
+                INDEX idx_audit_log_operation (operation)
+              );
+              EOF
+              
+              # Create sync metadata tables
+              echo "Creating sync metadata tables..."
+              
+              PGPASSWORD="${POSTGRES_PASSWORD}" psql -h {{ .Values.databases.postgresql.host }} -p {{ .Values.databases.postgresql.port }} -U {{ .Values.databases.postgresql.username }} -d {{ .Values.databases.postgresql.database }} << 'EOF'
+              CREATE TABLE IF NOT EXISTS sync_metadata (
+                id              BIGSERIAL PRIMARY KEY,
+                source_db       TEXT NOT NULL,
+                target_db       TEXT NOT NULL,
+                table_name      TEXT NOT NULL,
+                last_sync_ts    TIMESTAMPTZ,
+                sync_status     TEXT CHECK (sync_status IN ('active','paused','error')),
+                error_message   TEXT,
+                created_at      TIMESTAMPTZ DEFAULT now(),
+                updated_at      TIMESTAMPTZ DEFAULT now(),
+                UNIQUE(source_db, target_db, table_name)
+              );
+              
+              CREATE TABLE IF NOT EXISTS sync_conflicts (
+                id              BIGSERIAL PRIMARY KEY,
+                source_db       TEXT NOT NULL,
+                target_db       TEXT NOT NULL,
+                table_name      TEXT NOT NULL,
+                primary_key     JSONB NOT NULL,
+                conflict_type   TEXT NOT NULL,
+                source_data     JSONB,
+                target_data     JSONB,
+                resolution      TEXT CHECK (resolution IN ('pending','resolved','manual')),
+                resolved_by     TEXT,
+                resolved_at     TIMESTAMPTZ,
+                created_at      TIMESTAMPTZ DEFAULT now()
+              );
+              EOF
+              
+              echo "Database initialization completed successfully!"
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.secretName" . }}
+                  key: postgres-password
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.secretName" . }}
+                  key: mysql-password
+            - name: MONGODB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.secretName" . }}
+                  key: mongodb-password
+          {{- if .Values.initJob.containerSecurityContext.enabled }}
+          securityContext:
+            {{- omit .Values.initJob.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- with .Values.initJob.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+
+---
+{{- if .Values.migrationJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-migration-{{ .Values.migrationJob.version | replace "." "-" }}
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migration-job
+    migration.version: {{ .Values.migrationJob.version | quote }}
+  {{- with .Values.migrationJob.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.migrationJob.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  backoffLimit: {{ .Values.migrationJob.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrationJob.activeDeadlineSeconds }}
+  {{- if .Values.migrationJob.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ .Values.migrationJob.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "worker-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migration-job
+        migration.version: {{ .Values.migrationJob.version | quote }}
+      {{- with .Values.migrationJob.podLabels }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.migrationJob.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: {{ .Values.migrationJob.restartPolicy }}
+      serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.migrationJob.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.migrationJob.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.migrationJob.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.migrationJob.securityContext.enabled }}
+      securityContext:
+        {{- omit .Values.migrationJob.securityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: migration
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting database migration to version {{ .Values.migrationJob.version }}..."
+              
+              # Run migration scripts
+              npm run migrate:up
+              
+              echo "Migration completed successfully!"
+          env:
+            {{- include "worker-sync.env" . | nindent 12 }}
+          {{- if .Values.migrationJob.containerSecurityContext.enabled }}
+          securityContext:
+            {{- omit .Values.migrationJob.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- with .Values.migrationJob.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+
+---
+{{- if .Values.seedJob.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-seed
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seed-job
+  {{- with .Values.seedJob.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.seedJob.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  backoffLimit: {{ .Values.seedJob.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.seedJob.activeDeadlineSeconds }}
+  {{- if .Values.seedJob.ttlSecondsAfterFinished }}
+  ttlSecondsAfterFinished: {{ .Values.seedJob.ttlSecondsAfterFinished }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        {{- include "worker-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: seed-job
+      {{- with .Values.seedJob.podLabels }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.seedJob.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      restartPolicy: {{ .Values.seedJob.restartPolicy }}
+      serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.seedJob.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.seedJob.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.seedJob.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.seedJob.securityContext.enabled }}
+      securityContext:
+        {{- omit .Values.seedJob.securityContext "enabled" | toYaml | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: seed
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Starting database seeding..."
+              
+              # Run seed scripts
+              npm run seed
+              
+              echo "Seeding completed successfully!"
+          env:
+            {{- include "worker-sync.env" . | nindent 12 }}
+          {{- if .Values.seedJob.containerSecurityContext.enabled }}
+          securityContext:
+            {{- omit .Values.seedJob.containerSecurityContext "enabled" | toYaml | nindent 12 }}
+          {{- end }}
+          {{- with .Values.seedJob.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}

@@ -1,0 +1,285 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "worker-sync.fullname" . }}-test-connection"
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: test-connection
+      image: curlimages/curl:latest
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Testing application connectivity..."
+          
+          # Test health endpoint
+          echo "Testing health endpoint..."
+          curl -f http://{{ include "worker-sync.fullname" . }}:{{ .Values.service.port }}/health
+          
+          # Test metrics endpoint
+          echo "Testing metrics endpoint..."
+          curl -f http://{{ include "worker-sync.fullname" . }}:{{ .Values.service.metricsPort }}/metrics
+          
+          # Test ready endpoint
+          echo "Testing ready endpoint..."
+          curl -f http://{{ include "worker-sync.fullname" . }}:{{ .Values.service.port }}/ready
+          
+          echo "All connectivity tests passed!"
+      resources:
+        limits:
+          cpu: 100m
+          memory: 128Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "worker-sync.fullname" . }}-test-database"
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: test-database
+      image: postgres:16-alpine
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Testing database connections..."
+          
+          {{- if .Values.databases.postgresql.enabled }}
+          echo "Testing PostgreSQL connection..."
+          PGPASSWORD="${POSTGRES_PASSWORD}" pg_isready -h {{ .Values.databases.postgresql.host }} -p {{ .Values.databases.postgresql.port }} -U {{ .Values.databases.postgresql.username }}
+          echo "PostgreSQL connection successful!"
+          {{- end }}
+          
+          echo "Database connectivity tests passed!"
+      env:
+        {{- if .Values.databases.postgresql.enabled }}
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "worker-sync.secretName" . }}
+              key: postgres-password
+        {{- end }}
+      resources:
+        limits:
+          cpu: 100m
+          memory: 128Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+
+---
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "worker-sync.fullname" . }}-test-redis"
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "3"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: test-redis
+      image: redis:7-alpine
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Testing Redis connection..."
+          
+          redis-cli -h {{ .Values.redis.host }} -p {{ .Values.redis.port }} {{- if .Values.redis.auth.enabled }} -a "${REDIS_PASSWORD}"{{- end }} ping
+          
+          echo "Redis connectivity test passed!"
+      env:
+        {{- if .Values.redis.auth.enabled }}
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "worker-sync.secretName" . }}
+              key: redis-password
+        {{- end }}
+      resources:
+        limits:
+          cpu: 100m
+          memory: 128Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+{{- end }}
+
+---
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "worker-sync.fullname" . }}-test-prometheus"
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "4"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: test-prometheus
+      image: curlimages/curl:latest
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Testing Prometheus connectivity..."
+          
+          # Test Prometheus API
+          curl -f http://{{ include "worker-sync.fullname" . }}-prometheus:9090/-/healthy
+          
+          # Test if metrics are being scraped
+          curl -f "http://{{ include "worker-sync.fullname" . }}-prometheus:9090/api/v1/query?query=up"
+          
+          echo "Prometheus connectivity test passed!"
+      resources:
+        limits:
+          cpu: 100m
+          memory: 128Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+{{- end }}
+
+---
+{{- if .Values.grafana.enabled }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "worker-sync.fullname" . }}-test-grafana"
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: test-grafana
+      image: curlimages/curl:latest
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Testing Grafana connectivity..."
+          
+          # Test Grafana health
+          curl -f http://{{ include "worker-sync.fullname" . }}-grafana:3000/api/health
+          
+          echo "Grafana connectivity test passed!"
+      resources:
+        limits:
+          cpu: 100m
+          memory: 128Mi
+        requests:
+          cpu: 50m
+          memory: 64Mi
+{{- end }}
+
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "worker-sync.fullname" . }}-test-sync-functionality"
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "6"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  containers:
+    - name: test-sync
+      image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Testing sync functionality..."
+          
+          # Test sync status endpoint
+          curl -f http://{{ include "worker-sync.fullname" . }}:{{ .Values.service.port }}/api/sync/status
+          
+          # Test audit logs endpoint
+          curl -f http://{{ include "worker-sync.fullname" . }}:{{ .Values.service.port }}/api/audit/logs?limit=1
+          
+          echo "Sync functionality tests passed!"
+      env:
+        {{- include "worker-sync.env" . | nindent 8 }}
+      resources:
+        limits:
+          cpu: 200m
+          memory: 256Mi
+        requests:
+          cpu: 100m
+          memory: 128Mi

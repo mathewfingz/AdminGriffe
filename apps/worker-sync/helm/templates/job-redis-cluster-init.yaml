@@ -1,0 +1,268 @@
+{{- if and .Values.redis.enabled .Values.redis.cluster.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-redis-cluster-init
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-cluster-init
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.redis.cluster.init.backoffLimit | default 10 }}
+  activeDeadlineSeconds: {{ .Values.redis.cluster.init.activeDeadlineSeconds | default 600 }}
+  template:
+    metadata:
+      labels:
+        {{- include "worker-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis-cluster-init
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        # Wait for all Redis pods to be ready
+        - name: wait-for-redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag | default "7.2.5" }}"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Waiting for Redis pods to be ready..."
+              
+              REPLICAS={{ .Values.redis.replicas | default 6 }}
+              BASE_PORT={{ .Values.redis.port | default 6379 }}
+              SERVICE_NAME="{{ include "worker-sync.fullname" . }}-redis-headless.{{ .Release.Namespace }}.svc.cluster.local"
+              
+              for i in $(seq 0 $((REPLICAS - 1))); do
+                POD_NAME="{{ include "worker-sync.fullname" . }}-redis-$i"
+                REDIS_PORT=$((BASE_PORT + i))
+                
+                echo "Waiting for pod $POD_NAME on port $REDIS_PORT..."
+                
+                until redis-cli -h $POD_NAME.$SERVICE_NAME -p $REDIS_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} ping > /dev/null 2>&1; do
+                  echo "Redis pod $POD_NAME is not ready - sleeping"
+                  sleep 5
+                done
+                
+                echo "Redis pod $POD_NAME is ready!"
+              done
+              
+              echo "All Redis pods are ready!"
+          env:
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: redis-password
+            {{- end }}
+      containers:
+        - name: redis-cluster-init
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag | default "7.2.5" }}"
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Starting Redis Cluster initialization..."
+              
+              REPLICAS={{ .Values.redis.replicas | default 6 }}
+              BASE_PORT={{ .Values.redis.port | default 6379 }}
+              SERVICE_NAME="{{ include "worker-sync.fullname" . }}-redis-headless.{{ .Release.Namespace }}.svc.cluster.local"
+              CLUSTER_REPLICAS={{ .Values.redis.cluster.replicas | default 1 }}
+              
+              # Build the list of Redis nodes
+              REDIS_NODES=""
+              for i in $(seq 0 $((REPLICAS - 1))); do
+                POD_NAME="{{ include "worker-sync.fullname" . }}-redis-$i"
+                REDIS_PORT=$((BASE_PORT + i))
+                REDIS_NODES="$REDIS_NODES $POD_NAME.$SERVICE_NAME:$REDIS_PORT"
+              done
+              
+              echo "Redis nodes: $REDIS_NODES"
+              
+              # Check if cluster is already initialized
+              FIRST_NODE="{{ include "worker-sync.fullname" . }}-redis-0.$SERVICE_NAME"
+              FIRST_PORT=$BASE_PORT
+              
+              echo "Checking if cluster is already initialized..."
+              CLUSTER_INFO=$(redis-cli -h $FIRST_NODE -p $FIRST_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} cluster info 2>/dev/null || echo "cluster_state:fail")
+              
+              if echo "$CLUSTER_INFO" | grep -q "cluster_state:ok"; then
+                echo "Redis cluster is already initialized and healthy"
+                
+                # Verify all nodes are part of the cluster
+                echo "Verifying cluster nodes..."
+                CLUSTER_NODES=$(redis-cli -h $FIRST_NODE -p $FIRST_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} cluster nodes)
+                echo "Current cluster nodes:"
+                echo "$CLUSTER_NODES"
+                
+                # Count active nodes
+                ACTIVE_NODES=$(echo "$CLUSTER_NODES" | grep -v "fail\|handshake" | wc -l)
+                echo "Active nodes in cluster: $ACTIVE_NODES"
+                
+                if [ "$ACTIVE_NODES" -eq "$REPLICAS" ]; then
+                  echo "All nodes are active in the cluster. Initialization complete."
+                  exit 0
+                else
+                  echo "Not all nodes are active. Attempting to fix cluster..."
+                fi
+              else
+                echo "Cluster is not initialized or unhealthy. Proceeding with initialization..."
+              fi
+              
+              # Reset cluster state on all nodes (in case of partial initialization)
+              echo "Resetting cluster state on all nodes..."
+              for i in $(seq 0 $((REPLICAS - 1))); do
+                POD_NAME="{{ include "worker-sync.fullname" . }}-redis-$i"
+                REDIS_PORT=$((BASE_PORT + i))
+                
+                echo "Resetting cluster on $POD_NAME:$REDIS_PORT..."
+                redis-cli -h $POD_NAME.$SERVICE_NAME -p $REDIS_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} cluster reset hard || echo "Failed to reset $POD_NAME (may not be in cluster)"
+                redis-cli -h $POD_NAME.$SERVICE_NAME -p $REDIS_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} flushall || echo "Failed to flush $POD_NAME"
+              done
+              
+              # Wait a bit for reset to complete
+              sleep 10
+              
+              # Create the cluster
+              echo "Creating Redis cluster with $CLUSTER_REPLICAS replicas per master..."
+              
+              # Use redis-cli to create cluster
+              echo "yes" | redis-cli --cluster create $REDIS_NODES \
+                --cluster-replicas $CLUSTER_REPLICAS \
+                {{- if .Values.redis.auth.enabled }}
+                -a $REDIS_PASSWORD \
+                {{- end }}
+                --cluster-yes
+              
+              if [ $? -eq 0 ]; then
+                echo "Redis cluster created successfully!"
+              else
+                echo "Failed to create Redis cluster. Attempting manual setup..."
+                
+                # Manual cluster setup as fallback
+                MASTERS_COUNT=$((REPLICAS / (CLUSTER_REPLICAS + 1)))
+                echo "Setting up $MASTERS_COUNT masters with $CLUSTER_REPLICAS replicas each..."
+                
+                # Meet all nodes first
+                for i in $(seq 1 $((REPLICAS - 1))); do
+                  POD_NAME="{{ include "worker-sync.fullname" . }}-redis-$i"
+                  REDIS_PORT=$((BASE_PORT + i))
+                  
+                  echo "Adding node $POD_NAME:$REDIS_PORT to cluster..."
+                  redis-cli -h $FIRST_NODE -p $FIRST_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} \
+                    cluster meet $POD_NAME.$SERVICE_NAME $REDIS_PORT
+                done
+                
+                # Wait for nodes to discover each other
+                sleep 15
+                
+                # Assign slots to masters
+                SLOTS_PER_MASTER=$((16384 / MASTERS_COUNT))
+                for i in $(seq 0 $((MASTERS_COUNT - 1))); do
+                  POD_NAME="{{ include "worker-sync.fullname" . }}-redis-$i"
+                  REDIS_PORT=$((BASE_PORT + i))
+                  
+                  START_SLOT=$((i * SLOTS_PER_MASTER))
+                  if [ $i -eq $((MASTERS_COUNT - 1)) ]; then
+                    END_SLOT=16383
+                  else
+                    END_SLOT=$(((i + 1) * SLOTS_PER_MASTER - 1))
+                  fi
+                  
+                  echo "Assigning slots $START_SLOT-$END_SLOT to master $POD_NAME:$REDIS_PORT..."
+                  redis-cli -h $POD_NAME.$SERVICE_NAME -p $REDIS_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} \
+                    cluster addslots $(seq $START_SLOT $END_SLOT)
+                done
+                
+                # Set up replicas
+                if [ $CLUSTER_REPLICAS -gt 0 ]; then
+                  for i in $(seq $MASTERS_COUNT $((REPLICAS - 1))); do
+                    REPLICA_POD="{{ include "worker-sync.fullname" . }}-redis-$i"
+                    REPLICA_PORT=$((BASE_PORT + i))
+                    
+                    MASTER_INDEX=$(((i - MASTERS_COUNT) % MASTERS_COUNT))
+                    MASTER_POD="{{ include "worker-sync.fullname" . }}-redis-$MASTER_INDEX"
+                    MASTER_PORT=$((BASE_PORT + MASTER_INDEX))
+                    
+                    # Get master node ID
+                    MASTER_ID=$(redis-cli -h $MASTER_POD.$SERVICE_NAME -p $MASTER_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} cluster myid)
+                    
+                    echo "Setting $REPLICA_POD:$REPLICA_PORT as replica of $MASTER_POD:$MASTER_PORT (ID: $MASTER_ID)..."
+                    redis-cli -h $REPLICA_POD.$SERVICE_NAME -p $REPLICA_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} \
+                      cluster replicate $MASTER_ID
+                  done
+                fi
+              fi
+              
+              # Wait for cluster to stabilize
+              echo "Waiting for cluster to stabilize..."
+              sleep 30
+              
+              # Verify cluster health
+              echo "Verifying cluster health..."
+              for attempt in $(seq 1 10); do
+                CLUSTER_INFO=$(redis-cli -h $FIRST_NODE -p $FIRST_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} cluster info)
+                
+                if echo "$CLUSTER_INFO" | grep -q "cluster_state:ok"; then
+                  echo "Cluster is healthy!"
+                  
+                  # Show cluster status
+                  echo "Cluster nodes:"
+                  redis-cli -h $FIRST_NODE -p $FIRST_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} cluster nodes
+                  
+                  echo "Cluster info:"
+                  echo "$CLUSTER_INFO"
+                  
+                  # Test cluster functionality
+                  echo "Testing cluster functionality..."
+                  redis-cli -h $FIRST_NODE -p $FIRST_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} set test-key "cluster-test-value"
+                  TEST_VALUE=$(redis-cli -h $FIRST_NODE -p $FIRST_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} get test-key)
+                  
+                  if [ "$TEST_VALUE" = "cluster-test-value" ]; then
+                    echo "Cluster functionality test passed!"
+                    redis-cli -h $FIRST_NODE -p $FIRST_PORT {{- if .Values.redis.auth.enabled }} -a $REDIS_PASSWORD {{- end }} del test-key
+                    echo "Redis cluster initialization completed successfully!"
+                    exit 0
+                  else
+                    echo "Cluster functionality test failed!"
+                  fi
+                else
+                  echo "Cluster is not healthy yet (attempt $attempt/10). Waiting..."
+                  sleep 10
+                fi
+              done
+              
+              echo "Cluster failed to become healthy after 10 attempts"
+              exit 1
+          env:
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: redis-password
+            {{- end }}
+          resources:
+            {{- toYaml .Values.redis.cluster.init.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

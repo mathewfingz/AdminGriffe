@@ -1,10 +1,18 @@
 {{- if .Values.networkPolicy.enabled }}
-apiVersion: {{ include "worker-sync.networkPolicy.apiVersion" . }}
+apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "worker-sync.fullname" . }}
   labels:
     {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: network-policy
+  {{- with .Values.networkPolicy.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.networkPolicy.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   podSelector:
     matchLabels:
@@ -18,17 +26,289 @@ spec:
     {{- end }}
   {{- if .Values.networkPolicy.ingress.enabled }}
   ingress:
+    # Allow ingress from API Gateway
+    {{- if .Values.networkPolicy.ingress.allowApiGateway }}
     - from:
-        {{- with .Values.networkPolicy.ingress.from }}
-        {{- toYaml . | nindent 8 }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: api-gateway
+        {{- if .Values.networkPolicy.ingress.apiGateway.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingress.apiGateway.namespaceSelector | nindent 12 }}
         {{- end }}
       ports:
         - protocol: TCP
           port: {{ .Values.service.port }}
+        {{- if .Values.service.metricsPort }}
         - protocol: TCP
           port: {{ .Values.service.metricsPort }}
+        {{- end }}
+    {{- end }}
+    
+    # Allow ingress from monitoring (Prometheus)
+    {{- if .Values.networkPolicy.ingress.allowMonitoring }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+        {{- if .Values.networkPolicy.ingress.monitoring.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.ingress.monitoring.namespaceSelector | nindent 12 }}
+        {{- end }}
+      ports:
+        {{- if .Values.service.metricsPort }}
+        - protocol: TCP
+          port: {{ .Values.service.metricsPort }}
+        {{- end }}
+        - protocol: TCP
+          port: {{ .Values.service.port }}
+    {{- end }}
+
+    # Allow ingress from same namespace
+    {{- if .Values.networkPolicy.ingress.allowSameNamespace }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: {{ .Release.Namespace }}
+    {{- end }}
+
+    # Custom ingress rules
+    {{- with .Values.networkPolicy.ingress.customRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
   {{- end }}
+
   {{- if .Values.networkPolicy.egress.enabled }}
+  egress:
+    # Allow DNS resolution
+    {{- if .Values.networkPolicy.egress.allowDNS }}
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    {{- end }}
+
+    # Allow egress to databases
+    {{- if .Values.networkPolicy.egress.allowDatabases }}
+    # PostgreSQL
+    - to:
+        {{- if .Values.networkPolicy.egress.databases.postgresql.podSelector }}
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.egress.databases.postgresql.podSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.databases.postgresql.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.egress.databases.postgresql.namespaceSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.databases.postgresql.ipBlock }}
+        - ipBlock:
+            {{- toYaml .Values.networkPolicy.egress.databases.postgresql.ipBlock | nindent 12 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.databases.postgresql.port | default 5432 }}
+
+    # MySQL
+    - to:
+        {{- if .Values.networkPolicy.egress.databases.mysql.podSelector }}
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.egress.databases.mysql.podSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.databases.mysql.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.egress.databases.mysql.namespaceSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.databases.mysql.ipBlock }}
+        - ipBlock:
+            {{- toYaml .Values.networkPolicy.egress.databases.mysql.ipBlock | nindent 12 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.databases.mysql.port | default 3306 }}
+
+    # MongoDB
+    - to:
+        {{- if .Values.networkPolicy.egress.databases.mongodb.podSelector }}
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.egress.databases.mongodb.podSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.databases.mongodb.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.egress.databases.mongodb.namespaceSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.databases.mongodb.ipBlock }}
+        - ipBlock:
+            {{- toYaml .Values.networkPolicy.egress.databases.mongodb.ipBlock | nindent 12 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.databases.mongodb.port | default 27017 }}
+    {{- end }}
+
+    # Allow egress to Redis
+    {{- if .Values.networkPolicy.egress.allowRedis }}
+    - to:
+        {{- if .Values.networkPolicy.egress.redis.podSelector }}
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.egress.redis.podSelector | nindent 12 }}
+        {{- else }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.redis.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.egress.redis.namespaceSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.redis.ipBlock }}
+        - ipBlock:
+            {{- toYaml .Values.networkPolicy.egress.redis.ipBlock | nindent 12 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.redis.port | default 6379 }}
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.redis.clusterPort | default 16379 }}
+    {{- end }}
+
+    # Allow egress to Kafka
+    {{- if .Values.networkPolicy.egress.allowKafka }}
+    - to:
+        {{- if .Values.networkPolicy.egress.kafka.podSelector }}
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.egress.kafka.podSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.kafka.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.egress.kafka.namespaceSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.kafka.ipBlock }}
+        - ipBlock:
+            {{- toYaml .Values.networkPolicy.egress.kafka.ipBlock | nindent 12 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.kafka.port | default 9092 }}
+        {{- if .Values.networkPolicy.egress.kafka.jmxPort }}
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.kafka.jmxPort }}
+        {{- end }}
+    {{- end }}
+
+    # Allow egress to RabbitMQ
+    {{- if .Values.networkPolicy.egress.allowRabbitMQ }}
+    - to:
+        {{- if .Values.networkPolicy.egress.rabbitmq.podSelector }}
+        - podSelector:
+            {{- toYaml .Values.networkPolicy.egress.rabbitmq.podSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.rabbitmq.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.egress.rabbitmq.namespaceSelector | nindent 12 }}
+        {{- end }}
+        {{- if .Values.networkPolicy.egress.rabbitmq.ipBlock }}
+        - ipBlock:
+            {{- toYaml .Values.networkPolicy.egress.rabbitmq.ipBlock | nindent 12 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.rabbitmq.port | default 5672 }}
+        - protocol: TCP
+          port: {{ .Values.networkPolicy.egress.rabbitmq.managementPort | default 15672 }}
+    {{- end }}
+
+    # Allow HTTPS egress for external APIs
+    {{- if .Values.networkPolicy.egress.allowHTTPS }}
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+
+    # Allow HTTP egress for external APIs
+    {{- if .Values.networkPolicy.egress.allowHTTP }}
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 80
+    {{- end }}
+
+    # Custom egress rules
+    {{- with .Values.networkPolicy.egress.customRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+
+---
+{{- if and .Values.redis.enabled .Values.networkPolicy.redis.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-redis
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-network-policy
+  {{- with .Values.networkPolicy.redis.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.networkPolicy.redis.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow ingress from worker-sync
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "worker-sync.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 16379
+
+    # Allow ingress from monitoring
+    {{- if .Values.networkPolicy.redis.allowMonitoring }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+        {{- if .Values.networkPolicy.redis.monitoring.namespaceSelector }}
+        - namespaceSelector:
+            {{- toYaml .Values.networkPolicy.redis.monitoring.namespaceSelector | nindent 12 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 9121  # Redis Exporter
+    {{- end }}
+
+    # Allow Redis cluster communication
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      ports:
+        - protocol: TCP
+          port: 6379
+        - protocol: TCP
+          port: 16379
+
+    # Custom ingress rules for Redis
+    {{- with .Values.networkPolicy.redis.ingress.customRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+
   egress:
     # Allow DNS resolution
     - to: []
@@ -37,38 +317,129 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Allow HTTPS traffic
-    - to: []
-      ports:
-        - protocol: TCP
-          port: 443
-        - protocol: TCP
-          port: 80
-    # Allow database connections
+
+    # Allow Redis cluster communication
     - to:
-        {{- with .Values.networkPolicy.egress.to }}
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+              app.kubernetes.io/instance: {{ .Release.Name }}
       ports:
-        # PostgreSQL
-        - protocol: TCP
-          port: 5432
-        # MySQL
-        - protocol: TCP
-          port: 3306
-        # MongoDB
-        - protocol: TCP
-          port: 27017
-        # Redis
         - protocol: TCP
           port: 6379
-        # Kafka
         - protocol: TCP
-          port: 9092
-        # RabbitMQ
-        - protocol: TCP
-          port: 5672
-        - protocol: TCP
-          port: 15672
+          port: 16379
+
+    # Custom egress rules for Redis
+    {{- with .Values.networkPolicy.redis.egress.customRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+
+---
+{{- if and .Values.monitoring.prometheus.enabled .Values.networkPolicy.prometheus.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-network-policy
+  {{- with .Values.networkPolicy.prometheus.labels }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
+  {{- with .Values.networkPolicy.prometheus.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow ingress from Grafana
+    {{- if .Values.networkPolicy.prometheus.allowGrafana }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 9090
+    {{- end }}
+
+    # Allow ingress from AlertManager
+    {{- if .Values.networkPolicy.prometheus.allowAlertManager }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+      ports:
+        - protocol: TCP
+          port: 9090
+    {{- end }}
+
+    # Custom ingress rules for Prometheus
+    {{- with .Values.networkPolicy.prometheus.ingress.customRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+    # Allow scraping worker-sync
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "worker-sync.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.service.metricsPort | default 3001 }}
+
+    # Allow scraping Redis
+    {{- if .Values.redis.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 9121  # Redis Exporter
+    {{- end }}
+
+    # Allow scraping Node Exporter
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: node-exporter
+      ports:
+        - protocol: TCP
+          port: 9100
+
+    # Allow communication with AlertManager
+    {{- if .Values.monitoring.alertmanager.enabled }}
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alertmanager
+      ports:
+        - protocol: TCP
+          port: 9093
+    {{- end }}
+
+    # Custom egress rules for Prometheus
+    {{- with .Values.networkPolicy.prometheus.egress.customRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
 {{- end }}

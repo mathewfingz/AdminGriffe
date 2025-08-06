@@ -1,0 +1,446 @@
+{{- if .Values.monitoring.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus-config
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: {{ .Values.monitoring.prometheus.scrapeInterval | default "15s" }}
+      evaluation_interval: {{ .Values.monitoring.prometheus.evaluationInterval | default "15s" }}
+      external_labels:
+        cluster: {{ .Values.monitoring.prometheus.externalLabels.cluster | default .Values.global.clusterName | default "worker-sync" }}
+        environment: {{ .Values.monitoring.prometheus.externalLabels.environment | default .Values.global.environment | default "production" }}
+        region: {{ .Values.monitoring.prometheus.externalLabels.region | default .Values.global.region | default "us-east-1" }}
+
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+              {{- range .Values.monitoring.prometheus.alertmanager.targets }}
+              - {{ . }}
+              {{- end }}
+          {{- if .Values.monitoring.prometheus.alertmanager.pathPrefix }}
+          path_prefix: {{ .Values.monitoring.prometheus.alertmanager.pathPrefix }}
+          {{- end }}
+          {{- if .Values.monitoring.prometheus.alertmanager.scheme }}
+          scheme: {{ .Values.monitoring.prometheus.alertmanager.scheme }}
+          {{- end }}
+          {{- if .Values.monitoring.prometheus.alertmanager.timeout }}
+          timeout: {{ .Values.monitoring.prometheus.alertmanager.timeout }}
+          {{- end }}
+
+    scrape_configs:
+      # Worker Sync Application
+      - job_name: 'worker-sync'
+        static_configs:
+          - targets: ['{{ include "worker-sync.fullname" . }}:{{ .Values.service.metricsPort | default 3001 }}']
+        scrape_interval: {{ .Values.monitoring.prometheus.scrapeConfigs.workerSync.interval | default "10s" }}
+        metrics_path: {{ .Values.monitoring.prometheus.scrapeConfigs.workerSync.path | default "/metrics" }}
+        {{- if .Values.monitoring.prometheus.scrapeConfigs.workerSync.params }}
+        params:
+          {{- toYaml .Values.monitoring.prometheus.scrapeConfigs.workerSync.params | nindent 10 }}
+        {{- end }}
+
+      {{- if .Values.redis.enabled }}
+      # Redis Cluster
+      - job_name: 'redis-cluster'
+        static_configs:
+          - targets:
+            {{- range $i := until (int (.Values.redis.replicas | default 6)) }}
+            - '{{ include "worker-sync.fullname" $ }}-redis-{{ $i }}.{{ include "worker-sync.fullname" $ }}-redis-headless:{{ $.Values.redis.metrics.port | default 9121 }}'
+            {{- end }}
+        scrape_interval: {{ .Values.monitoring.prometheus.scrapeConfigs.redis.interval | default "15s" }}
+        metrics_path: {{ .Values.monitoring.prometheus.scrapeConfigs.redis.path | default "/metrics" }}
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: {{ include "worker-sync.fullname" . }}-redis:{{ .Values.redis.metrics.port | default 9121 }}
+      {{- end }}
+
+      {{- if .Values.monitoring.nodeExporter.enabled }}
+      # Node Exporter
+      - job_name: 'node-exporter'
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - source_labels: [__address__]
+            regex: '(.*):10250'
+            target_label: __address__
+            replacement: '${1}:{{ .Values.monitoring.nodeExporter.port | default 9100 }}'
+          - source_labels: [__meta_kubernetes_node_label_kubernetes_io_hostname]
+            target_label: instance
+        scrape_interval: {{ .Values.monitoring.prometheus.scrapeConfigs.nodeExporter.interval | default "30s" }}
+        metrics_path: {{ .Values.monitoring.prometheus.scrapeConfigs.nodeExporter.path | default "/metrics" }}
+      {{- end }}
+
+      # Kubernetes API Server
+      - job_name: 'kubernetes-apiservers'
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      # Kubernetes Nodes
+      - job_name: 'kubernetes-nodes'
+        kubernetes_sd_configs:
+          - role: node
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/${1}/proxy/metrics
+
+      # Kubernetes Pods
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+
+      # Kubernetes Services
+      - job_name: 'kubernetes-services'
+        kubernetes_sd_configs:
+          - role: endpoints
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_scheme]
+            action: replace
+            target_label: __scheme__
+            regex: (https?)
+          - source_labels: [__meta_kubernetes_service_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_service_annotation_prometheus_io_port]
+            action: replace
+            target_label: __address__
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+          - action: labelmap
+            regex: __meta_kubernetes_service_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_service_name]
+            action: replace
+            target_label: kubernetes_name
+
+      {{- if .Values.kafka.enabled }}
+      # Kafka (if using JMX exporter)
+      - job_name: 'kafka'
+        static_configs:
+          - targets:
+            {{- range .Values.kafka.metrics.targets }}
+            - {{ . }}
+            {{- end }}
+        scrape_interval: {{ .Values.monitoring.prometheus.scrapeConfigs.kafka.interval | default "30s" }}
+        metrics_path: {{ .Values.monitoring.prometheus.scrapeConfigs.kafka.path | default "/metrics" }}
+      {{- end }}
+
+      {{- if .Values.postgresql.enabled }}
+      # PostgreSQL
+      - job_name: 'postgresql'
+        static_configs:
+          - targets:
+            {{- range .Values.postgresql.metrics.targets }}
+            - {{ . }}
+            {{- end }}
+        scrape_interval: {{ .Values.monitoring.prometheus.scrapeConfigs.postgresql.interval | default "30s" }}
+        metrics_path: {{ .Values.monitoring.prometheus.scrapeConfigs.postgresql.path | default "/metrics" }}
+      {{- end }}
+
+      {{- if .Values.mysql.enabled }}
+      # MySQL
+      - job_name: 'mysql'
+        static_configs:
+          - targets:
+            {{- range .Values.mysql.metrics.targets }}
+            - {{ . }}
+            {{- end }}
+        scrape_interval: {{ .Values.monitoring.prometheus.scrapeConfigs.mysql.interval | default "30s" }}
+        metrics_path: {{ .Values.monitoring.prometheus.scrapeConfigs.mysql.path | default "/metrics" }}
+      {{- end }}
+
+      {{- if .Values.mongodb.enabled }}
+      # MongoDB
+      - job_name: 'mongodb'
+        static_configs:
+          - targets:
+            {{- range .Values.mongodb.metrics.targets }}
+            - {{ . }}
+            {{- end }}
+        scrape_interval: {{ .Values.monitoring.prometheus.scrapeConfigs.mongodb.interval | default "30s" }}
+        metrics_path: {{ .Values.monitoring.prometheus.scrapeConfigs.mongodb.path | default "/metrics" }}
+      {{- end }}
+
+      {{- if .Values.rabbitmq.enabled }}
+      # RabbitMQ
+      - job_name: 'rabbitmq'
+        static_configs:
+          - targets:
+            {{- range .Values.rabbitmq.metrics.targets }}
+            - {{ . }}
+            {{- end }}
+        scrape_interval: {{ .Values.monitoring.prometheus.scrapeConfigs.rabbitmq.interval | default "30s" }}
+        metrics_path: {{ .Values.monitoring.prometheus.scrapeConfigs.rabbitmq.path | default "/metrics" }}
+      {{- end }}
+
+      # Custom scrape configs
+      {{- with .Values.monitoring.prometheus.extraScrapeConfigs }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+
+  # Recording Rules
+  recording_rules.yml: |
+    groups:
+      - name: worker-sync.recording
+        interval: {{ .Values.monitoring.prometheus.recordingRules.interval | default "30s" }}
+        rules:
+          # Application metrics
+          - record: worker_sync:request_rate
+            expr: rate(http_requests_total{job="worker-sync"}[5m])
+          
+          - record: worker_sync:request_duration_p95
+            expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="worker-sync"}[5m]))
+          
+          - record: worker_sync:error_rate
+            expr: rate(http_requests_total{job="worker-sync",status=~"5.."}[5m]) / rate(http_requests_total{job="worker-sync"}[5m])
+          
+          # Sync metrics
+          - record: worker_sync:sync_lag_ms
+            expr: sync_lag_milliseconds{job="worker-sync"}
+          
+          - record: worker_sync:sync_throughput
+            expr: rate(sync_operations_total{job="worker-sync"}[5m])
+          
+          - record: worker_sync:conflict_rate
+            expr: rate(sync_conflicts_total{job="worker-sync"}[5m])
+          
+          # Queue metrics
+          - record: worker_sync:queue_depth
+            expr: queue_jobs_waiting{job="worker-sync"}
+          
+          - record: worker_sync:queue_processing_rate
+            expr: rate(queue_jobs_completed_total{job="worker-sync"}[5m])
+          
+          # Database metrics
+          - record: worker_sync:db_connection_pool_usage
+            expr: db_connections_active{job="worker-sync"} / db_connections_max{job="worker-sync"}
+          
+          # Redis metrics
+          {{- if .Values.redis.enabled }}
+          - record: redis:memory_usage_ratio
+            expr: redis_memory_used_bytes{job="redis-cluster"} / redis_memory_max_bytes{job="redis-cluster"}
+          
+          - record: redis:hit_rate
+            expr: rate(redis_keyspace_hits_total{job="redis-cluster"}[5m]) / (rate(redis_keyspace_hits_total{job="redis-cluster"}[5m]) + rate(redis_keyspace_misses_total{job="redis-cluster"}[5m]))
+          
+          - record: redis:ops_per_sec
+            expr: rate(redis_commands_processed_total{job="redis-cluster"}[5m])
+          {{- end }}
+
+      # Node metrics
+      {{- if .Values.monitoring.nodeExporter.enabled }}
+      - name: node.recording
+        interval: {{ .Values.monitoring.prometheus.recordingRules.interval | default "30s" }}
+        rules:
+          - record: node:cpu_utilization
+            expr: 1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m])) by (instance)
+          
+          - record: node:memory_utilization
+            expr: 1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)
+          
+          - record: node:disk_utilization
+            expr: 1 - (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"})
+          
+          - record: node:network_receive_rate
+            expr: rate(node_network_receive_bytes_total[5m])
+          
+          - record: node:network_transmit_rate
+            expr: rate(node_network_transmit_bytes_total[5m])
+      {{- end }}
+
+  # Alert Rules
+  alert_rules.yml: |
+    groups:
+      - name: worker-sync.alerts
+        rules:
+          # Application alerts
+          - alert: WorkerSyncHighErrorRate
+            expr: worker_sync:error_rate > {{ .Values.monitoring.prometheus.alerts.errorRateThreshold | default 0.05 }}
+            for: {{ .Values.monitoring.prometheus.alerts.errorRateFor | default "5m" }}
+            labels:
+              severity: critical
+              service: worker-sync
+            annotations:
+              summary: "High error rate in Worker Sync"
+              description: "Worker Sync error rate is {{ "{{ $value | humanizePercentage }}" }} for more than 5 minutes"
+
+          - alert: WorkerSyncHighLatency
+            expr: worker_sync:request_duration_p95 > {{ .Values.monitoring.prometheus.alerts.latencyThreshold | default 1.0 }}
+            for: {{ .Values.monitoring.prometheus.alerts.latencyFor | default "5m" }}
+            labels:
+              severity: warning
+              service: worker-sync
+            annotations:
+              summary: "High latency in Worker Sync"
+              description: "Worker Sync 95th percentile latency is {{ "{{ $value }}s" }} for more than 5 minutes"
+
+          - alert: WorkerSyncSyncLagHigh
+            expr: worker_sync:sync_lag_ms > {{ .Values.monitoring.prometheus.alerts.syncLagThreshold | default 500 }}
+            for: {{ .Values.monitoring.prometheus.alerts.syncLagFor | default "2m" }}
+            labels:
+              severity: critical
+              service: worker-sync
+            annotations:
+              summary: "High sync lag in Worker Sync"
+              description: "Worker Sync lag is {{ "{{ $value }}ms" }} for more than 2 minutes"
+
+          - alert: WorkerSyncHighConflictRate
+            expr: worker_sync:conflict_rate > {{ .Values.monitoring.prometheus.alerts.conflictRateThreshold | default 0.1 }}
+            for: {{ .Values.monitoring.prometheus.alerts.conflictRateFor | default "5m" }}
+            labels:
+              severity: warning
+              service: worker-sync
+            annotations:
+              summary: "High conflict rate in Worker Sync"
+              description: "Worker Sync conflict rate is {{ "{{ $value }}" }} conflicts/sec for more than 5 minutes"
+
+          - alert: WorkerSyncQueueBacklog
+            expr: worker_sync:queue_depth > {{ .Values.monitoring.prometheus.alerts.queueDepthThreshold | default 1000 }}
+            for: {{ .Values.monitoring.prometheus.alerts.queueDepthFor | default "10m" }}
+            labels:
+              severity: warning
+              service: worker-sync
+            annotations:
+              summary: "High queue backlog in Worker Sync"
+              description: "Worker Sync queue depth is {{ "{{ $value }}" }} jobs for more than 10 minutes"
+
+          - alert: WorkerSyncDown
+            expr: up{job="worker-sync"} == 0
+            for: {{ .Values.monitoring.prometheus.alerts.downFor | default "1m" }}
+            labels:
+              severity: critical
+              service: worker-sync
+            annotations:
+              summary: "Worker Sync is down"
+              description: "Worker Sync has been down for more than 1 minute"
+
+          # Database connection alerts
+          - alert: WorkerSyncDBConnectionPoolHigh
+            expr: worker_sync:db_connection_pool_usage > {{ .Values.monitoring.prometheus.alerts.dbConnectionThreshold | default 0.8 }}
+            for: {{ .Values.monitoring.prometheus.alerts.dbConnectionFor | default "5m" }}
+            labels:
+              severity: warning
+              service: worker-sync
+            annotations:
+              summary: "High database connection pool usage"
+              description: "Database connection pool usage is {{ "{{ $value | humanizePercentage }}" }} for more than 5 minutes"
+
+          {{- if .Values.redis.enabled }}
+          # Redis alerts
+          - alert: RedisHighMemoryUsage
+            expr: redis:memory_usage_ratio > {{ .Values.monitoring.prometheus.alerts.redisMemoryThreshold | default 0.9 }}
+            for: {{ .Values.monitoring.prometheus.alerts.redisMemoryFor | default "5m" }}
+            labels:
+              severity: warning
+              service: redis
+            annotations:
+              summary: "High Redis memory usage"
+              description: "Redis memory usage is {{ "{{ $value | humanizePercentage }}" }} for more than 5 minutes"
+
+          - alert: RedisDown
+            expr: up{job="redis-cluster"} == 0
+            for: {{ .Values.monitoring.prometheus.alerts.redisDownFor | default "1m" }}
+            labels:
+              severity: critical
+              service: redis
+            annotations:
+              summary: "Redis is down"
+              description: "Redis instance {{ "{{ $labels.instance }}" }} has been down for more than 1 minute"
+          {{- end }}
+
+          {{- if .Values.monitoring.nodeExporter.enabled }}
+          # Node alerts
+          - alert: NodeHighCPUUsage
+            expr: node:cpu_utilization > {{ .Values.monitoring.prometheus.alerts.nodeCpuThreshold | default 0.8 }}
+            for: {{ .Values.monitoring.prometheus.alerts.nodeCpuFor | default "10m" }}
+            labels:
+              severity: warning
+              service: node
+            annotations:
+              summary: "High CPU usage on node"
+              description: "CPU usage on node {{ "{{ $labels.instance }}" }} is {{ "{{ $value | humanizePercentage }}" }} for more than 10 minutes"
+
+          - alert: NodeHighMemoryUsage
+            expr: node:memory_utilization > {{ .Values.monitoring.prometheus.alerts.nodeMemoryThreshold | default 0.9 }}
+            for: {{ .Values.monitoring.prometheus.alerts.nodeMemoryFor | default "5m" }}
+            labels:
+              severity: critical
+              service: node
+            annotations:
+              summary: "High memory usage on node"
+              description: "Memory usage on node {{ "{{ $labels.instance }}" }} is {{ "{{ $value | humanizePercentage }}" }} for more than 5 minutes"
+
+          - alert: NodeHighDiskUsage
+            expr: node:disk_utilization > {{ .Values.monitoring.prometheus.alerts.nodeDiskThreshold | default 0.85 }}
+            for: {{ .Values.monitoring.prometheus.alerts.nodeDiskFor | default "5m" }}
+            labels:
+              severity: warning
+              service: node
+            annotations:
+              summary: "High disk usage on node"
+              description: "Disk usage on node {{ "{{ $labels.instance }}" }} is {{ "{{ $value | humanizePercentage }}" }} for more than 5 minutes"
+          {{- end }}
+
+          # Custom alerts
+          {{- with .Values.monitoring.prometheus.extraAlerts }}
+          {{- toYaml . | nindent 10 }}
+          {{- end }}
+
+{{- end }}
