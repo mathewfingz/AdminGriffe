@@ -1,0 +1,338 @@
+{{- if .Values.kafka.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-kafka-setup
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kafka-setup
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.kafka.setup.backoffLimit | default 5 }}
+  activeDeadlineSeconds: {{ .Values.kafka.setup.activeDeadlineSeconds | default 600 }}
+  template:
+    metadata:
+      labels:
+        {{- include "worker-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kafka-setup
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        # Wait for Kafka to be ready
+        - name: wait-for-kafka
+          image: confluentinc/cp-kafka:{{ .Values.kafka.version | default "7.7.0" }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Waiting for Kafka to be ready..."
+              
+              {{- range .Values.kafka.brokers }}
+              echo "Checking Kafka broker: {{ . }}"
+              until kafka-broker-api-versions --bootstrap-server {{ . }} > /dev/null 2>&1; do
+                echo "Kafka broker {{ . }} is unavailable - sleeping"
+                sleep 5
+              done
+              echo "Kafka broker {{ . }} is ready!"
+              {{- end }}
+              
+              echo "All Kafka brokers are ready!"
+          env:
+            {{- if .Values.kafka.security.enabled }}
+            - name: KAFKA_OPTS
+              value: "-Djava.security.auth.login.config=/etc/kafka/kafka_client_jaas.conf"
+            {{- end }}
+          {{- if .Values.kafka.security.enabled }}
+          volumeMounts:
+            - name: kafka-config
+              mountPath: /etc/kafka
+              readOnly: true
+            {{- if eq .Values.kafka.security.protocol "SSL" "SASL_SSL" }}
+            - name: kafka-ssl-certs
+              mountPath: /etc/ssl/certs
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      containers:
+        - name: kafka-setup
+          image: confluentinc/cp-kafka:{{ .Values.kafka.version | default "7.7.0" }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Starting Kafka setup..."
+              
+              # Set Kafka client properties
+              {{- if .Values.kafka.security.enabled }}
+              export KAFKA_OPTS="-Djava.security.auth.login.config=/etc/kafka/kafka_client_jaas.conf"
+              SECURITY_ARGS="--command-config /etc/kafka/admin.properties"
+              {{- else }}
+              SECURITY_ARGS=""
+              {{- end }}
+              
+              BOOTSTRAP_SERVERS="{{ .Values.kafka.brokers | join "," }}"
+              
+              # Function to create topic if it doesn't exist
+              create_topic() {
+                local topic_name=$1
+                local partitions=$2
+                local replication_factor=$3
+                local configs=$4
+                
+                echo "Checking if topic '$topic_name' exists..."
+                if kafka-topics --bootstrap-server $BOOTSTRAP_SERVERS $SECURITY_ARGS --list | grep -q "^${topic_name}$"; then
+                  echo "Topic '$topic_name' already exists"
+                  
+                  # Update topic configuration if needed
+                  if [ ! -z "$configs" ]; then
+                    echo "Updating configuration for topic '$topic_name'..."
+                    kafka-configs --bootstrap-server $BOOTSTRAP_SERVERS $SECURITY_ARGS \
+                      --entity-type topics --entity-name $topic_name \
+                      --alter --add-config $configs || echo "Failed to update config for $topic_name"
+                  fi
+                else
+                  echo "Creating topic '$topic_name' with $partitions partitions and replication factor $replication_factor..."
+                  
+                  CREATE_CMD="kafka-topics --bootstrap-server $BOOTSTRAP_SERVERS $SECURITY_ARGS \
+                    --create --topic $topic_name \
+                    --partitions $partitions \
+                    --replication-factor $replication_factor"
+                  
+                  if [ ! -z "$configs" ]; then
+                    CREATE_CMD="$CREATE_CMD --config $configs"
+                  fi
+                  
+                  eval $CREATE_CMD
+                  
+                  if [ $? -eq 0 ]; then
+                    echo "Topic '$topic_name' created successfully"
+                  else
+                    echo "Failed to create topic '$topic_name'"
+                    exit 1
+                  fi
+                fi
+              }
+              
+              # Create CDC Events Topic
+              create_topic \
+                "{{ .Values.kafka.topics.cdcEvents | default "cdc-events" }}" \
+                "{{ .Values.kafka.topics.cdcEventsPartitions | default 12 }}" \
+                "{{ .Values.kafka.topics.replicationFactor | default 3 }}" \
+                "cleanup.policy=delete,retention.ms={{ .Values.kafka.topics.retentionMs | default 604800000 }},segment.ms={{ .Values.kafka.topics.segmentMs | default 86400000 }},compression.type=snappy,min.insync.replicas={{ .Values.kafka.topics.minInSyncReplicas | default 2 }},unclean.leader.election.enable=false"
+              
+              # Create Audit Events Topic
+              create_topic \
+                "{{ .Values.kafka.topics.auditEvents | default "audit-events" }}" \
+                "{{ .Values.kafka.topics.auditEventsPartitions | default 8 }}" \
+                "{{ .Values.kafka.topics.replicationFactor | default 3 }}" \
+                "cleanup.policy=delete,retention.ms={{ .Values.kafka.topics.auditRetentionMs | default 2592000000 }},segment.ms={{ .Values.kafka.topics.segmentMs | default 86400000 }},compression.type=snappy,min.insync.replicas={{ .Values.kafka.topics.minInSyncReplicas | default 2 }},unclean.leader.election.enable=false"
+              
+              # Create Sync Status Topic
+              create_topic \
+                "{{ .Values.kafka.topics.syncStatus | default "sync-status" }}" \
+                "{{ .Values.kafka.topics.syncStatusPartitions | default 4 }}" \
+                "{{ .Values.kafka.topics.replicationFactor | default 3 }}" \
+                "cleanup.policy=compact,retention.ms={{ .Values.kafka.topics.syncStatusRetentionMs | default 86400000 }},segment.ms={{ .Values.kafka.topics.segmentMs | default 3600000 }},compression.type=snappy,min.insync.replicas={{ .Values.kafka.topics.minInSyncReplicas | default 2 }},delete.retention.ms=3600000"
+              
+              # Create Conflicts Topic
+              create_topic \
+                "{{ .Values.kafka.topics.conflicts | default "sync-conflicts" }}" \
+                "{{ .Values.kafka.topics.conflictsPartitions | default 6 }}" \
+                "{{ .Values.kafka.topics.replicationFactor | default 3 }}" \
+                "cleanup.policy=delete,retention.ms={{ .Values.kafka.topics.conflictRetentionMs | default 1209600000 }},segment.ms={{ .Values.kafka.topics.segmentMs | default 86400000 }},compression.type=snappy,min.insync.replicas={{ .Values.kafka.topics.minInSyncReplicas | default 2 }},unclean.leader.election.enable=false"
+              
+              # Create Dead Letter Queue Topic
+              create_topic \
+                "{{ .Values.kafka.topics.dlq | default "sync-dlq" }}" \
+                "{{ .Values.kafka.topics.dlqPartitions | default 3 }}" \
+                "{{ .Values.kafka.topics.replicationFactor | default 3 }}" \
+                "cleanup.policy=delete,retention.ms={{ .Values.kafka.topics.dlqRetentionMs | default 2592000000 }},segment.ms={{ .Values.kafka.topics.segmentMs | default 86400000 }},compression.type=snappy,min.insync.replicas={{ .Values.kafka.topics.minInSyncReplicas | default 2 }},unclean.leader.election.enable=false"
+              
+              {{- if .Values.kafka.connect.enabled }}
+              # Create Kafka Connect internal topics
+              create_topic \
+                "{{ .Values.kafka.connect.offsetStorageTopic | default (printf "%s-connect-offsets" (include "worker-sync.fullname" .)) }}" \
+                "{{ .Values.kafka.connect.offsetStoragePartitions | default 25 }}" \
+                "{{ .Values.kafka.connect.offsetStorageReplicationFactor | default 3 }}" \
+                "cleanup.policy=compact,compression.type=snappy"
+              
+              create_topic \
+                "{{ .Values.kafka.connect.configStorageTopic | default (printf "%s-connect-configs" (include "worker-sync.fullname" .)) }}" \
+                "1" \
+                "{{ .Values.kafka.connect.configStorageReplicationFactor | default 3 }}" \
+                "cleanup.policy=compact,compression.type=snappy"
+              
+              create_topic \
+                "{{ .Values.kafka.connect.statusStorageTopic | default (printf "%s-connect-status" (include "worker-sync.fullname" .)) }}" \
+                "{{ .Values.kafka.connect.statusStoragePartitions | default 5 }}" \
+                "{{ .Values.kafka.connect.statusStorageReplicationFactor | default 3 }}" \
+                "cleanup.policy=compact,compression.type=snappy"
+              {{- end }}
+              
+              {{- if .Values.kafka.schemaRegistry.enabled }}
+              # Create Schema Registry topic
+              create_topic \
+                "{{ .Values.kafka.schemaRegistry.topic | default "_schemas" }}" \
+                "1" \
+                "{{ .Values.kafka.schemaRegistry.replicationFactor | default 3 }}" \
+                "cleanup.policy=compact,compression.type=snappy"
+              {{- end }}
+              
+              # List all topics to verify creation
+              echo "Listing all topics:"
+              kafka-topics --bootstrap-server $BOOTSTRAP_SERVERS $SECURITY_ARGS --list
+              
+              # Describe topics for verification
+              echo "Describing created topics:"
+              {{- range $topic := list (.Values.kafka.topics.cdcEvents | default "cdc-events") (.Values.kafka.topics.auditEvents | default "audit-events") (.Values.kafka.topics.syncStatus | default "sync-status") (.Values.kafka.topics.conflicts | default "sync-conflicts") (.Values.kafka.topics.dlq | default "sync-dlq") }}
+              echo "Topic: {{ $topic }}"
+              kafka-topics --bootstrap-server $BOOTSTRAP_SERVERS $SECURITY_ARGS --describe --topic {{ $topic }} || echo "Failed to describe topic {{ $topic }}"
+              {{- end }}
+              
+              {{- if .Values.kafka.connect.enabled }}
+              # Wait for Kafka Connect to be ready and deploy connectors
+              echo "Waiting for Kafka Connect to be ready..."
+              CONNECT_URL="{{ .Values.kafka.connect.url | default "http://kafka-connect:8083" }}"
+              
+              until curl -f $CONNECT_URL/connectors > /dev/null 2>&1; do
+                echo "Kafka Connect is not ready - sleeping"
+                sleep 10
+              done
+              echo "Kafka Connect is ready!"
+              
+              # Deploy Debezium connectors
+              {{- if .Values.postgresql.enabled }}
+              echo "Deploying PostgreSQL Debezium connector..."
+              curl -X POST $CONNECT_URL/connectors \
+                -H "Content-Type: application/json" \
+                -d @/etc/kafka-config/debezium-postgres.json || echo "Failed to deploy PostgreSQL connector"
+              {{- end }}
+              
+              {{- if .Values.mysql.enabled }}
+              echo "Deploying MySQL Debezium connector..."
+              curl -X POST $CONNECT_URL/connectors \
+                -H "Content-Type: application/json" \
+                -d @/etc/kafka-config/debezium-mysql.json || echo "Failed to deploy MySQL connector"
+              {{- end }}
+              
+              {{- if .Values.mongodb.enabled }}
+              echo "Deploying MongoDB Debezium connector..."
+              curl -X POST $CONNECT_URL/connectors \
+                -H "Content-Type: application/json" \
+                -d @/etc/kafka-config/debezium-mongodb.json || echo "Failed to deploy MongoDB connector"
+              {{- end }}
+              
+              # List deployed connectors
+              echo "Listing deployed connectors:"
+              curl -s $CONNECT_URL/connectors | jq .
+              {{- end }}
+              
+              echo "Kafka setup completed successfully!"
+          env:
+            {{- if .Values.kafka.security.enabled }}
+            - name: KAFKA_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: kafka-username
+            - name: KAFKA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: kafka-password
+            {{- if eq .Values.kafka.security.protocol "SSL" "SASL_SSL" }}
+            - name: KAFKA_SSL_TRUSTSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: kafka-ssl-truststore-password
+            - name: KAFKA_SSL_KEYSTORE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: kafka-ssl-keystore-password
+            - name: KAFKA_SSL_KEY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: kafka-ssl-key-password
+            {{- end }}
+            {{- end }}
+            {{- if .Values.postgresql.enabled }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: postgresql-password
+            {{- end }}
+            {{- if .Values.mysql.enabled }}
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: mysql-password
+            {{- end }}
+            {{- if .Values.mongodb.enabled }}
+            - name: MONGODB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: mongodb-password
+            {{- end }}
+          volumeMounts:
+            - name: kafka-config
+              mountPath: /etc/kafka-config
+              readOnly: true
+            {{- if .Values.kafka.security.enabled }}
+            - name: kafka-admin-config
+              mountPath: /etc/kafka
+              readOnly: true
+            {{- if eq .Values.kafka.security.protocol "SSL" "SASL_SSL" }}
+            - name: kafka-ssl-certs
+              mountPath: /etc/ssl/certs
+              readOnly: true
+            {{- end }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.kafka.setup.resources | nindent 12 }}
+      volumes:
+        - name: kafka-config
+          configMap:
+            name: {{ include "worker-sync.fullname" . }}-kafka-config
+        {{- if .Values.kafka.security.enabled }}
+        - name: kafka-admin-config
+          configMap:
+            name: {{ include "worker-sync.fullname" . }}-kafka-config
+            items:
+              - key: admin.properties
+                path: admin.properties
+              - key: kafka_client_jaas.conf
+                path: kafka_client_jaas.conf
+        {{- if eq .Values.kafka.security.protocol "SSL" "SASL_SSL" }}
+        - name: kafka-ssl-certs
+          secret:
+            secretName: {{ .Values.kafka.security.ssl.secretName | default (printf "%s-kafka-ssl" (include "worker-sync.fullname" .)) }}
+        {{- end }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

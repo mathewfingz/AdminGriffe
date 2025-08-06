@@ -1,0 +1,105 @@
+{{- if .Values.redis.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-redis-headless
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+    {{- with .Values.redis.service.headless.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  ports:
+    {{- range $i := until (int (.Values.redis.replicas | default 6)) }}
+    - name: redis-{{ $i }}
+      port: {{ add ($.Values.redis.port | default 6379) $i }}
+      targetPort: {{ add ($.Values.redis.port | default 6379) $i }}
+      protocol: TCP
+    - name: cluster-bus-{{ $i }}
+      port: {{ add ($.Values.redis.port | default 6379) $i 10000 }}
+      targetPort: {{ add ($.Values.redis.port | default 6379) $i 10000 }}
+      protocol: TCP
+    {{- end }}
+    {{- if .Values.redis.metrics.enabled }}
+    - name: metrics
+      port: {{ .Values.redis.metrics.port | default 9121 }}
+      targetPort: metrics
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "worker-sync.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-redis
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  annotations:
+    {{- if .Values.redis.metrics.enabled }}
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "{{ .Values.redis.metrics.port | default 9121 }}"
+    prometheus.io/path: "/metrics"
+    {{- end }}
+    {{- with .Values.redis.service.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  type: {{ .Values.redis.service.type | default "ClusterIP" }}
+  {{- if and (eq (.Values.redis.service.type | default "ClusterIP") "LoadBalancer") .Values.redis.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.redis.service.loadBalancerIP }}
+  {{- end }}
+  {{- if and (eq (.Values.redis.service.type | default "ClusterIP") "LoadBalancer") .Values.redis.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- range .Values.redis.service.loadBalancerSourceRanges }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if and (eq (.Values.redis.service.type | default "ClusterIP") "ClusterIP") .Values.redis.service.clusterIP }}
+  clusterIP: {{ .Values.redis.service.clusterIP }}
+  {{- end }}
+  {{- if .Values.redis.service.externalIPs }}
+  externalIPs:
+    {{- range .Values.redis.service.externalIPs }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  ports:
+    - name: redis
+      port: {{ .Values.redis.service.port | default 6379 }}
+      targetPort: {{ .Values.redis.port | default 6379 }}
+      protocol: TCP
+      {{- if and (or (eq (.Values.redis.service.type | default "ClusterIP") "NodePort") (eq (.Values.redis.service.type | default "ClusterIP") "LoadBalancer")) .Values.redis.service.nodePort }}
+      nodePort: {{ .Values.redis.service.nodePort }}
+      {{- end }}
+    {{- if .Values.redis.metrics.enabled }}
+    - name: metrics
+      port: {{ .Values.redis.metrics.service.port | default 9121 }}
+      targetPort: metrics
+      protocol: TCP
+      {{- if and (or (eq (.Values.redis.service.type | default "ClusterIP") "NodePort") (eq (.Values.redis.service.type | default "ClusterIP") "LoadBalancer")) .Values.redis.metrics.service.nodePort }}
+      nodePort: {{ .Values.redis.metrics.service.nodePort }}
+      {{- end }}
+    {{- end }}
+    {{- with .Values.redis.service.extraPorts }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  selector:
+    {{- include "worker-sync.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  {{- if .Values.redis.service.sessionAffinity }}
+  sessionAffinity: {{ .Values.redis.service.sessionAffinity }}
+  {{- if .Values.redis.service.sessionAffinityConfig }}
+  sessionAffinityConfig:
+    {{- toYaml .Values.redis.service.sessionAffinityConfig | nindent 4 }}
+  {{- end }}
+  {{- end }}
+{{- end }}

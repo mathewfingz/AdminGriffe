@@ -1,28 +1,61 @@
-{{- if and .Values.serviceMonitor.enabled .Values.monitoring.prometheus.enabled }}
+{{- if and .Values.monitoring.prometheus.enabled .Values.monitoring.serviceMonitor.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
   name: {{ include "worker-sync.fullname" . }}
   labels:
     {{- include "worker-sync.labels" . | nindent 4 }}
-    {{- with .Values.serviceMonitor.labels }}
+    app.kubernetes.io/component: worker-sync
+  {{- with .Values.monitoring.serviceMonitor.labels }}
     {{- toYaml . | nindent 4 }}
-    {{- end }}
-  {{- with .Values.serviceMonitor.annotations }}
+  {{- end }}
+  {{- with .Values.monitoring.serviceMonitor.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
+  jobLabel: {{ .Values.monitoring.serviceMonitor.jobLabel | default "app.kubernetes.io/name" }}
+  {{- if .Values.monitoring.serviceMonitor.targetLabels }}
+  targetLabels:
+    {{- range .Values.monitoring.serviceMonitor.targetLabels }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if .Values.monitoring.serviceMonitor.podTargetLabels }}
+  podTargetLabels:
+    {{- range .Values.monitoring.serviceMonitor.podTargetLabels }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "worker-sync.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: metrics
+      app.kubernetes.io/component: worker-sync
   endpoints:
     - port: metrics
-      path: {{ .Values.monitoring.prometheus.path }}
-      interval: {{ .Values.serviceMonitor.interval }}
-      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
-      honorLabels: true
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      path: {{ .Values.monitoring.serviceMonitor.path | default "/metrics" }}
+      scheme: {{ .Values.monitoring.serviceMonitor.scheme | default "http" }}
+      {{- if .Values.monitoring.serviceMonitor.tlsConfig }}
+      tlsConfig:
+        {{- toYaml .Values.monitoring.serviceMonitor.tlsConfig | nindent 8 }}
+      {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.bearerTokenFile }}
+      bearerTokenFile: {{ .Values.monitoring.serviceMonitor.bearerTokenFile }}
+      {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.bearerTokenSecret }}
+      bearerTokenSecret:
+        {{- toYaml .Values.monitoring.serviceMonitor.bearerTokenSecret | nindent 8 }}
+      {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.basicAuth }}
+      basicAuth:
+        {{- toYaml .Values.monitoring.serviceMonitor.basicAuth | nindent 8 }}
+      {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml .Values.monitoring.serviceMonitor.metricRelabelings | nindent 8 }}
+      {{- else }}
       metricRelabelings:
         - sourceLabels: [__name__]
           regex: 'go_.*'
@@ -30,6 +63,14 @@ spec:
         - sourceLabels: [__name__]
           regex: 'promhttp_.*'
           action: drop
+        - sourceLabels: [__name__]
+          regex: 'worker_sync_.*'
+          action: keep
+      {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml .Values.monitoring.serviceMonitor.relabelings | nindent 8 }}
+      {{- else }}
       relabelings:
         - sourceLabels: [__meta_kubernetes_pod_name]
           targetLabel: pod
@@ -39,4 +80,133 @@ spec:
           targetLabel: namespace
         - targetLabel: service
           replacement: {{ include "worker-sync.fullname" . }}
+      {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.proxyUrl }}
+      proxyUrl: {{ .Values.monitoring.serviceMonitor.proxyUrl }}
+      {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.honorLabels }}
+      honorLabels: {{ .Values.monitoring.serviceMonitor.honorLabels }}
+      {{- end }}
+      {{- if .Values.monitoring.serviceMonitor.honorTimestamps }}
+      honorTimestamps: {{ .Values.monitoring.serviceMonitor.honorTimestamps }}
+      {{- end }}
+  {{- if .Values.monitoring.serviceMonitor.namespaceSelector }}
+  namespaceSelector:
+    {{- toYaml .Values.monitoring.serviceMonitor.namespaceSelector | nindent 4 }}
+  {{- end }}
+  {{- if .Values.monitoring.serviceMonitor.sampleLimit }}
+  sampleLimit: {{ .Values.monitoring.serviceMonitor.sampleLimit }}
+  {{- end }}
+  {{- if .Values.monitoring.serviceMonitor.targetLimit }}
+  targetLimit: {{ .Values.monitoring.serviceMonitor.targetLimit }}
+  {{- end }}
+---
+{{- if .Values.monitoring.redis.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-redis
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+  {{- with .Values.monitoring.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  jobLabel: app.kubernetes.io/name
+  selector:
+    matchLabels:
+      {{- include "worker-sync.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      path: /metrics
+      scheme: http
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: 'redis_.*'
+          action: keep
+        - sourceLabels: [instance]
+          targetLabel: redis_instance
+        - sourceLabels: [__name__]
+          targetLabel: __tmp_redis_metric
+        - sourceLabels: [__tmp_redis_metric]
+          regex: 'redis_(.*)'
+          targetLabel: redis_metric
+          replacement: '${1}'
+{{- end }}
+---
+{{- if .Values.monitoring.prometheus.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+spec:
+  jobLabel: app.kubernetes.io/name
+  selector:
+    matchLabels:
+      {{- include "worker-sync.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: prometheus
+  endpoints:
+    - port: web
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      path: /metrics
+      scheme: http
+{{- end }}
+---
+{{- if .Values.monitoring.alertmanager.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-alertmanager
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager
+spec:
+  jobLabel: app.kubernetes.io/name
+  selector:
+    matchLabels:
+      {{- include "worker-sync.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: alertmanager
+  endpoints:
+    - port: web
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      path: /metrics
+      scheme: http
+{{- end }}
+---
+{{- if .Values.monitoring.nodeExporter.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-node-exporter
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-exporter
+spec:
+  jobLabel: app.kubernetes.io/name
+  selector:
+    matchLabels:
+      {{- include "worker-sync.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node-exporter
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.monitoring.serviceMonitor.scrapeTimeout | default "10s" }}
+      path: /metrics
+      scheme: http
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          regex: 'node_.*'
+          action: keep
+        - sourceLabels: [instance]
+          targetLabel: node_instance
+{{- end }}
 {{- end }}

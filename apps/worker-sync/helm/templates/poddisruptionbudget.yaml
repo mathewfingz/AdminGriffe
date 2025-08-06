@@ -1,10 +1,18 @@
 {{- if .Values.podDisruptionBudget.enabled }}
-apiVersion: {{ include "worker-sync.pdb.apiVersion" . }}
+apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "worker-sync.fullname" . }}
   labels:
     {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pod-disruption-budget
+  {{- with .Values.podDisruptionBudget.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   {{- if .Values.podDisruptionBudget.minAvailable }}
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
@@ -15,4 +23,120 @@ spec:
   selector:
     matchLabels:
       {{- include "worker-sync.selectorLabels" . | nindent 6 }}
+
+---
+{{- if and .Values.redis.enabled .Values.redis.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-redis
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis-pod-disruption-budget
+  {{- with .Values.redis.podDisruptionBudget.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.redis.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.redis.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.redis.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.redis.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.redis.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+---
+{{- if and .Values.monitoring.prometheus.enabled .Values.monitoring.prometheus.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-pod-disruption-budget
+  {{- with .Values.monitoring.prometheus.podDisruptionBudget.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.prometheus.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.monitoring.prometheus.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.monitoring.prometheus.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.monitoring.prometheus.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.monitoring.prometheus.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+---
+{{- if and .Values.monitoring.grafana.enabled .Values.monitoring.grafana.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-grafana
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana-pod-disruption-budget
+  {{- with .Values.monitoring.grafana.podDisruptionBudget.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.grafana.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.monitoring.grafana.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.monitoring.grafana.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.monitoring.grafana.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.monitoring.grafana.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+---
+{{- if and .Values.monitoring.alertmanager.enabled .Values.monitoring.alertmanager.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-alertmanager
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: alertmanager-pod-disruption-budget
+  {{- with .Values.monitoring.alertmanager.podDisruptionBudget.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.alertmanager.podDisruptionBudget.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.monitoring.alertmanager.podDisruptionBudget.minAvailable }}
+  minAvailable: {{ .Values.monitoring.alertmanager.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  {{- if .Values.monitoring.alertmanager.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.monitoring.alertmanager.podDisruptionBudget.maxUnavailable }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+      app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
 {{- end }}

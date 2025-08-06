@@ -5,6 +5,7 @@ import categoryRoutes from './categories';
 import orderRoutes from './orders';
 import auditRoutes from './audit';
 import syncRoutes from './sync';
+import firebaseRoutes from './firebase';
 import { authenticateToken } from '../middleware/auth';
 
 const router: Router = Router();
@@ -69,5 +70,6 @@ router.use('/categories', authenticateToken, categoryRoutes);
 router.use('/orders', authenticateToken, orderRoutes);
 router.use('/audit', authenticateToken, auditRoutes);
 router.use('/sync', authenticateToken, syncRoutes);
+router.use('/firebase', authenticateToken, firebaseRoutes);
 
 export default router;

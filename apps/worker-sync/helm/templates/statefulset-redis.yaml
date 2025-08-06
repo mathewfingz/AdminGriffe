@@ -1,0 +1,338 @@
+{{- if .Values.redis.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-redis
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: redis
+spec:
+  serviceName: {{ include "worker-sync.fullname" . }}-redis-headless
+  replicas: {{ .Values.redis.replicas | default 6 }}
+  selector:
+    matchLabels:
+      {{- include "worker-sync.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: redis
+  template:
+    metadata:
+      labels:
+        {{- include "worker-sync.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: redis
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.redis.metrics.port | default 9121 }}"
+        prometheus.io/path: "/metrics"
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "worker-sync.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: "OnRootMismatch"
+      initContainers:
+        - name: redis-init
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag | default "7.2.5" }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/bash
+            - -c
+            - |
+              set -e
+              echo "Initializing Redis configuration..."
+              
+              # Get pod ordinal
+              POD_ORDINAL=${HOSTNAME##*-}
+              echo "Pod ordinal: $POD_ORDINAL"
+              
+              # Calculate Redis port (base port + ordinal)
+              REDIS_PORT=$(({{ .Values.redis.port | default 6379 }} + POD_ORDINAL))
+              echo "Redis port: $REDIS_PORT"
+              
+              # Calculate cluster bus port
+              CLUSTER_BUS_PORT=$((REDIS_PORT + 10000))
+              echo "Cluster bus port: $CLUSTER_BUS_PORT"
+              
+              # Create Redis configuration
+              cat > /redis-config/redis.conf << EOF
+              # Basic configuration
+              port $REDIS_PORT
+              bind 0.0.0.0
+              protected-mode no
+              
+              # Cluster configuration
+              cluster-enabled yes
+              cluster-config-file nodes-$REDIS_PORT.conf
+              cluster-node-timeout {{ .Values.redis.cluster.nodeTimeout | default 15000 }}
+              cluster-announce-port $REDIS_PORT
+              cluster-announce-bus-port $CLUSTER_BUS_PORT
+              cluster-announce-hostname ${HOSTNAME}.{{ include "worker-sync.fullname" . }}-redis-headless.{{ .Release.Namespace }}.svc.cluster.local
+              
+              # Persistence
+              {{- if .Values.redis.persistence.enabled }}
+              save {{ .Values.redis.persistence.save | default "900 1 300 10 60 10000" }}
+              dbfilename dump-$REDIS_PORT.rdb
+              dir /redis-data
+              
+              {{- if .Values.redis.persistence.aof.enabled }}
+              appendonly yes
+              appendfilename "appendonly-$REDIS_PORT.aof"
+              appendfsync {{ .Values.redis.persistence.aof.fsync | default "everysec" }}
+              no-appendfsync-on-rewrite {{ .Values.redis.persistence.aof.noAppendfsyncOnRewrite | default "no" }}
+              auto-aof-rewrite-percentage {{ .Values.redis.persistence.aof.autoAofRewritePercentage | default 100 }}
+              auto-aof-rewrite-min-size {{ .Values.redis.persistence.aof.autoAofRewriteMinSize | default "64mb" }}
+              {{- end }}
+              {{- else }}
+              save ""
+              {{- end }}
+              
+              # Memory management
+              maxmemory {{ .Values.redis.maxMemory | default "1gb" }}
+              maxmemory-policy {{ .Values.redis.maxMemoryPolicy | default "allkeys-lru" }}
+              
+              # Security
+              {{- if .Values.redis.auth.enabled }}
+              requirepass ${REDIS_PASSWORD}
+              masterauth ${REDIS_PASSWORD}
+              {{- end }}
+              
+              # Logging
+              loglevel {{ .Values.redis.logLevel | default "notice" }}
+              logfile /redis-logs/redis-$REDIS_PORT.log
+              
+              # Performance tuning
+              tcp-keepalive {{ .Values.redis.tcpKeepalive | default 300 }}
+              timeout {{ .Values.redis.timeout | default 0 }}
+              tcp-backlog {{ .Values.redis.tcpBacklog | default 511 }}
+              databases {{ .Values.redis.databases | default 16 }}
+              
+              # Slow log
+              slowlog-log-slower-than {{ .Values.redis.slowlog.logSlowerThan | default 10000 }}
+              slowlog-max-len {{ .Values.redis.slowlog.maxLen | default 128 }}
+              
+              # Client output buffer limits
+              client-output-buffer-limit normal {{ .Values.redis.clientOutputBufferLimit.normal | default "0 0 0" }}
+              client-output-buffer-limit replica {{ .Values.redis.clientOutputBufferLimit.replica | default "256mb 64mb 60" }}
+              client-output-buffer-limit pubsub {{ .Values.redis.clientOutputBufferLimit.pubsub | default "32mb 8mb 60" }}
+              
+              # Additional configurations
+              {{- range $key, $value := .Values.redis.extraConfig }}
+              {{ $key }} {{ $value }}
+              {{- end }}
+              EOF
+              
+              echo "Redis configuration created successfully"
+              cat /redis-config/redis.conf
+          env:
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: redis-password
+            {{- end }}
+          volumeMounts:
+            - name: redis-config
+              mountPath: /redis-config
+            - name: redis-data
+              mountPath: /redis-data
+            - name: redis-logs
+              mountPath: /redis-logs
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag | default "7.2.5" }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - redis-server
+            - /redis-config/redis.conf
+          ports:
+            - name: redis
+              containerPort: {{ add (.Values.redis.port | default 6379) 0 }}
+              protocol: TCP
+            - name: cluster-bus
+              containerPort: {{ add (.Values.redis.port | default 6379) 10000 }}
+              protocol: TCP
+          env:
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: redis-password
+            {{- end }}
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  POD_ORDINAL=${HOSTNAME##*-}
+                  REDIS_PORT=$(({{ .Values.redis.port | default 6379 }} + POD_ORDINAL))
+                  {{- if .Values.redis.auth.enabled }}
+                  redis-cli -p $REDIS_PORT -a $REDIS_PASSWORD ping
+                  {{- else }}
+                  redis-cli -p $REDIS_PORT ping
+                  {{- end }}
+            initialDelaySeconds: {{ .Values.redis.livenessProbe.initialDelaySeconds | default 30 }}
+            periodSeconds: {{ .Values.redis.livenessProbe.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .Values.redis.livenessProbe.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.redis.livenessProbe.failureThreshold | default 3 }}
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  POD_ORDINAL=${HOSTNAME##*-}
+                  REDIS_PORT=$(({{ .Values.redis.port | default 6379 }} + POD_ORDINAL))
+                  {{- if .Values.redis.auth.enabled }}
+                  redis-cli -p $REDIS_PORT -a $REDIS_PASSWORD ping
+                  {{- else }}
+                  redis-cli -p $REDIS_PORT ping
+                  {{- end }}
+            initialDelaySeconds: {{ .Values.redis.readinessProbe.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ .Values.redis.readinessProbe.periodSeconds | default 5 }}
+            timeoutSeconds: {{ .Values.redis.readinessProbe.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .Values.redis.readinessProbe.failureThreshold | default 3 }}
+          resources:
+            {{- toYaml .Values.redis.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: redis-config
+              mountPath: /redis-config
+              readOnly: true
+            - name: redis-data
+              mountPath: /redis-data
+            - name: redis-logs
+              mountPath: /redis-logs
+        {{- if .Values.redis.metrics.enabled }}
+        - name: redis-exporter
+          image: "{{ .Values.redis.metrics.image.repository }}:{{ .Values.redis.metrics.image.tag | default "v1.62.0" }}"
+          imagePullPolicy: {{ .Values.redis.metrics.image.pullPolicy | default "IfNotPresent" }}
+          args:
+            - --redis.addr=redis://localhost:$(REDIS_PORT)
+            {{- if .Values.redis.auth.enabled }}
+            - --redis.password=$(REDIS_PASSWORD)
+            {{- end }}
+            - --web.listen-address=0.0.0.0:{{ .Values.redis.metrics.port | default 9121 }}
+            - --log-format={{ .Values.redis.metrics.logFormat | default "txt" }}
+            {{- with .Values.redis.metrics.extraArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.redis.metrics.port | default 9121 }}
+              protocol: TCP
+          env:
+            - name: REDIS_PORT
+              value: "{{ add (.Values.redis.port | default 6379) 0 }}"
+            {{- if .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "worker-sync.fullname" . }}-secret
+                  key: redis-password
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: {{ .Values.redis.metrics.livenessProbe.initialDelaySeconds | default 30 }}
+            periodSeconds: {{ .Values.redis.metrics.livenessProbe.periodSeconds | default 15 }}
+            timeoutSeconds: {{ .Values.redis.metrics.livenessProbe.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.redis.metrics.livenessProbe.failureThreshold | default 3 }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: metrics
+            initialDelaySeconds: {{ .Values.redis.metrics.readinessProbe.initialDelaySeconds | default 5 }}
+            periodSeconds: {{ .Values.redis.metrics.readinessProbe.periodSeconds | default 10 }}
+            timeoutSeconds: {{ .Values.redis.metrics.readinessProbe.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .Values.redis.metrics.readinessProbe.failureThreshold | default 3 }}
+          resources:
+            {{- toYaml .Values.redis.metrics.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+        {{- end }}
+      volumes:
+        - name: redis-config
+          emptyDir: {}
+        - name: redis-logs
+          emptyDir: {}
+      {{- with .Values.redis.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.redis.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.redis.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.redis.priorityClassName }}
+      priorityClassName: {{ .Values.redis.priorityClassName }}
+      {{- end }}
+  {{- if .Values.redis.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+        labels:
+          {{- include "worker-sync.labels" . | nindent 10 }}
+          app.kubernetes.io/component: redis
+      spec:
+        accessModes:
+          {{- range .Values.redis.persistence.accessModes }}
+          - {{ . | quote }}
+          {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.redis.persistence.size | quote }}
+        {{- if .Values.redis.persistence.storageClass }}
+        {{- if (eq "-" .Values.redis.persistence.storageClass) }}
+        storageClassName: ""
+        {{- else }}
+        storageClassName: {{ .Values.redis.persistence.storageClass | quote }}
+        {{- end }}
+        {{- end }}
+  {{- else }}
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+  {{- end }}
+  updateStrategy:
+    type: {{ .Values.redis.updateStrategy.type | default "RollingUpdate" }}
+    {{- if eq (.Values.redis.updateStrategy.type | default "RollingUpdate") "RollingUpdate" }}
+    rollingUpdate:
+      partition: {{ .Values.redis.updateStrategy.rollingUpdate.partition | default 0 }}
+    {{- end }}
+  podManagementPolicy: {{ .Values.redis.podManagementPolicy | default "Parallel" }}
+{{- end }}

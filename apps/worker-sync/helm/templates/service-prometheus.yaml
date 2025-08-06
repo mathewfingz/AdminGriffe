@@ -1,0 +1,113 @@
+{{- if .Values.monitoring.prometheus.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+  {{- with .Values.monitoring.prometheus.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.monitoring.prometheus.service.type | default "ClusterIP" }}
+  {{- if and (eq .Values.monitoring.prometheus.service.type "ClusterIP") .Values.monitoring.prometheus.service.clusterIP }}
+  clusterIP: {{ .Values.monitoring.prometheus.service.clusterIP }}
+  {{- end }}
+  {{- if .Values.monitoring.prometheus.service.sessionAffinity }}
+  sessionAffinity: {{ .Values.monitoring.prometheus.service.sessionAffinity }}
+  {{- end }}
+  {{- if .Values.monitoring.prometheus.service.sessionAffinityConfig }}
+  sessionAffinityConfig:
+    {{- toYaml .Values.monitoring.prometheus.service.sessionAffinityConfig | nindent 4 }}
+  {{- end }}
+  {{- if and (eq .Values.monitoring.prometheus.service.type "LoadBalancer") .Values.monitoring.prometheus.service.loadBalancerIP }}
+  loadBalancerIP: {{ .Values.monitoring.prometheus.service.loadBalancerIP }}
+  {{- end }}
+  {{- if and (eq .Values.monitoring.prometheus.service.type "LoadBalancer") .Values.monitoring.prometheus.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- range .Values.monitoring.prometheus.service.loadBalancerSourceRanges }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  {{- if and (or (eq .Values.monitoring.prometheus.service.type "NodePort") (eq .Values.monitoring.prometheus.service.type "LoadBalancer")) .Values.monitoring.prometheus.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ .Values.monitoring.prometheus.service.externalTrafficPolicy }}
+  {{- end }}
+  {{- if .Values.monitoring.prometheus.service.ipFamilyPolicy }}
+  ipFamilyPolicy: {{ .Values.monitoring.prometheus.service.ipFamilyPolicy }}
+  {{- end }}
+  {{- if .Values.monitoring.prometheus.service.ipFamilies }}
+  ipFamilies:
+    {{- range .Values.monitoring.prometheus.service.ipFamilies }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  ports:
+    - port: {{ .Values.monitoring.prometheus.service.port | default 9090 }}
+      targetPort: http
+      protocol: TCP
+      name: http
+      {{- if and (or (eq .Values.monitoring.prometheus.service.type "NodePort") (eq .Values.monitoring.prometheus.service.type "LoadBalancer")) .Values.monitoring.prometheus.service.nodePort }}
+      nodePort: {{ .Values.monitoring.prometheus.service.nodePort }}
+      {{- end }}
+    {{- if .Values.monitoring.prometheus.service.extraPorts }}
+    {{- range .Values.monitoring.prometheus.service.extraPorts }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      protocol: {{ .protocol | default "TCP" }}
+      targetPort: {{ .targetPort }}
+      {{- if .nodePort }}
+      nodePort: {{ .nodePort }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
+  selector:
+    {{- include "worker-sync.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worker-sync.fullname" . }}-prometheus-headless
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+    {{- with .Values.monitoring.prometheus.headlessService.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  type: ClusterIP
+  clusterIP: None
+  publishNotReadyAddresses: true
+  {{- if .Values.monitoring.prometheus.headlessService.ipFamilyPolicy }}
+  ipFamilyPolicy: {{ .Values.monitoring.prometheus.headlessService.ipFamilyPolicy }}
+  {{- end }}
+  {{- if .Values.monitoring.prometheus.headlessService.ipFamilies }}
+  ipFamilies:
+    {{- range .Values.monitoring.prometheus.headlessService.ipFamilies }}
+    - {{ . }}
+    {{- end }}
+  {{- end }}
+  ports:
+    - port: 9090
+      targetPort: http
+      protocol: TCP
+      name: http
+    {{- if .Values.monitoring.prometheus.headlessService.extraPorts }}
+    {{- range .Values.monitoring.prometheus.headlessService.extraPorts }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      protocol: {{ .protocol | default "TCP" }}
+      targetPort: {{ .targetPort }}
+    {{- end }}
+    {{- end }}
+  selector:
+    {{- include "worker-sync.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+
+{{- end }}

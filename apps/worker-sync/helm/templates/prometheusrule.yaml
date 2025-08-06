@@ -1,0 +1,257 @@
+{{- if and .Values.monitoring.prometheus.enabled .Values.monitoring.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "worker-sync.fullname" . }}
+  labels:
+    {{- include "worker-sync.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus-rule
+  {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.monitoring.prometheusRule.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  groups:
+    - name: worker-sync.rules
+      interval: {{ .Values.monitoring.prometheusRule.interval | default "30s" }}
+      rules:
+        # Recording Rules
+        - record: worker_sync:sync_lag_ms:rate5m
+          expr: rate(worker_sync_lag_ms[5m])
+          labels:
+            service: worker-sync
+
+        - record: worker_sync:sync_operations:rate5m
+          expr: rate(worker_sync_operations_total[5m])
+          labels:
+            service: worker-sync
+
+        - record: worker_sync:error_rate:rate5m
+          expr: rate(worker_sync_errors_total[5m]) / rate(worker_sync_operations_total[5m])
+          labels:
+            service: worker-sync
+
+        - record: worker_sync:queue_depth:avg5m
+          expr: avg_over_time(worker_sync_queue_depth[5m])
+          labels:
+            service: worker-sync
+
+        - record: worker_sync:conflict_rate:rate5m
+          expr: rate(worker_sync_conflicts_total[5m])
+          labels:
+            service: worker-sync
+
+        # Alert Rules - Critical
+        - alert: WorkerSyncDown
+          expr: up{job="worker-sync"} == 0
+          for: {{ .Values.monitoring.prometheusRule.alerts.workerSyncDown.for | default "1m" }}
+          labels:
+            severity: critical
+            service: worker-sync
+          annotations:
+            summary: "Worker Sync instance is down"
+            description: "Worker Sync instance {{ "{{ $labels.instance }}" }} has been down for more than 1 minute."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/worker-sync-down"
+
+        - alert: WorkerSyncHighLag
+          expr: worker_sync_lag_ms > {{ .Values.monitoring.prometheusRule.alerts.syncLag.critical | default 500 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.syncLag.for | default "2m" }}
+          labels:
+            severity: critical
+            service: worker-sync
+          annotations:
+            summary: "Worker Sync lag is critically high"
+            description: "Worker Sync lag is {{ "{{ $value }}" }}ms on instance {{ "{{ $labels.instance }}" }}, which is above the critical threshold of {{ .Values.monitoring.prometheusRule.alerts.syncLag.critical | default 500 }}ms."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/high-sync-lag"
+
+        - alert: WorkerSyncHighErrorRate
+          expr: worker_sync:error_rate:rate5m > {{ .Values.monitoring.prometheusRule.alerts.errorRate.critical | default 0.05 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.errorRate.for | default "5m" }}
+          labels:
+            severity: critical
+            service: worker-sync
+          annotations:
+            summary: "Worker Sync error rate is critically high"
+            description: "Worker Sync error rate is {{ "{{ printf \"%.2f\" $value }}" }}% on instance {{ "{{ $labels.instance }}" }}, which is above the critical threshold of {{ .Values.monitoring.prometheusRule.alerts.errorRate.critical | default 0.05 }}%."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/high-error-rate"
+
+        - alert: WorkerSyncQueueBacklog
+          expr: worker_sync_queue_depth > {{ .Values.monitoring.prometheusRule.alerts.queueDepth.critical | default 10000 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.queueDepth.for | default "5m" }}
+          labels:
+            severity: critical
+            service: worker-sync
+          annotations:
+            summary: "Worker Sync queue has critical backlog"
+            description: "Worker Sync queue depth is {{ "{{ $value }}" }} on instance {{ "{{ $labels.instance }}" }}, which is above the critical threshold of {{ .Values.monitoring.prometheusRule.alerts.queueDepth.critical | default 10000 }}."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/queue-backlog"
+
+        # Alert Rules - Warning
+        - alert: WorkerSyncModerateLag
+          expr: worker_sync_lag_ms > {{ .Values.monitoring.prometheusRule.alerts.syncLag.warning | default 200 }} and worker_sync_lag_ms <= {{ .Values.monitoring.prometheusRule.alerts.syncLag.critical | default 500 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.syncLag.warningFor | default "5m" }}
+          labels:
+            severity: warning
+            service: worker-sync
+          annotations:
+            summary: "Worker Sync lag is elevated"
+            description: "Worker Sync lag is {{ "{{ $value }}" }}ms on instance {{ "{{ $labels.instance }}" }}, which is above the warning threshold of {{ .Values.monitoring.prometheusRule.alerts.syncLag.warning | default 200 }}ms."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/moderate-sync-lag"
+
+        - alert: WorkerSyncModerateErrorRate
+          expr: worker_sync:error_rate:rate5m > {{ .Values.monitoring.prometheusRule.alerts.errorRate.warning | default 0.01 }} and worker_sync:error_rate:rate5m <= {{ .Values.monitoring.prometheusRule.alerts.errorRate.critical | default 0.05 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.errorRate.warningFor | default "10m" }}
+          labels:
+            severity: warning
+            service: worker-sync
+          annotations:
+            summary: "Worker Sync error rate is elevated"
+            description: "Worker Sync error rate is {{ "{{ printf \"%.2f\" $value }}" }}% on instance {{ "{{ $labels.instance }}" }}, which is above the warning threshold of {{ .Values.monitoring.prometheusRule.alerts.errorRate.warning | default 0.01 }}%."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/moderate-error-rate"
+
+        - alert: WorkerSyncHighConflictRate
+          expr: worker_sync:conflict_rate:rate5m > {{ .Values.monitoring.prometheusRule.alerts.conflictRate.threshold | default 0.1 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.conflictRate.for | default "10m" }}
+          labels:
+            severity: warning
+            service: worker-sync
+          annotations:
+            summary: "Worker Sync conflict rate is high"
+            description: "Worker Sync conflict rate is {{ "{{ printf \"%.2f\" $value }}" }} conflicts/sec on instance {{ "{{ $labels.instance }}" }}, which is above the threshold of {{ .Values.monitoring.prometheusRule.alerts.conflictRate.threshold | default 0.1 }}."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/high-conflict-rate"
+
+        - alert: WorkerSyncLowThroughput
+          expr: worker_sync:sync_operations:rate5m < {{ .Values.monitoring.prometheusRule.alerts.throughput.threshold | default 10 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.throughput.for | default "15m" }}
+          labels:
+            severity: warning
+            service: worker-sync
+          annotations:
+            summary: "Worker Sync throughput is low"
+            description: "Worker Sync throughput is {{ "{{ printf \"%.2f\" $value }}" }} ops/sec on instance {{ "{{ $labels.instance }}" }}, which is below the expected threshold of {{ .Values.monitoring.prometheusRule.alerts.throughput.threshold | default 10 }}."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/low-throughput"
+
+    - name: redis.rules
+      interval: {{ .Values.monitoring.prometheusRule.interval | default "30s" }}
+      rules:
+        # Redis Recording Rules
+        - record: redis:memory_usage:ratio
+          expr: redis_memory_used_bytes / redis_memory_max_bytes
+          labels:
+            service: redis
+
+        - record: redis:connected_clients:avg5m
+          expr: avg_over_time(redis_connected_clients[5m])
+          labels:
+            service: redis
+
+        - record: redis:ops:rate5m
+          expr: rate(redis_commands_processed_total[5m])
+          labels:
+            service: redis
+
+        # Redis Alert Rules
+        - alert: RedisDown
+          expr: up{job="redis"} == 0
+          for: {{ .Values.monitoring.prometheusRule.alerts.redis.down.for | default "1m" }}
+          labels:
+            severity: critical
+            service: redis
+          annotations:
+            summary: "Redis instance is down"
+            description: "Redis instance {{ "{{ $labels.instance }}" }} has been down for more than 1 minute."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/redis-down"
+
+        - alert: RedisHighMemoryUsage
+          expr: redis:memory_usage:ratio > {{ .Values.monitoring.prometheusRule.alerts.redis.memoryUsage.threshold | default 0.9 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.redis.memoryUsage.for | default "5m" }}
+          labels:
+            severity: warning
+            service: redis
+          annotations:
+            summary: "Redis memory usage is high"
+            description: "Redis memory usage is {{ "{{ printf \"%.2f\" $value }}" }}% on instance {{ "{{ $labels.instance }}" }}, which is above the threshold of {{ .Values.monitoring.prometheusRule.alerts.redis.memoryUsage.threshold | default 0.9 }}%."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/redis-high-memory"
+
+        - alert: RedisHighConnections
+          expr: redis_connected_clients > {{ .Values.monitoring.prometheusRule.alerts.redis.connections.threshold | default 1000 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.redis.connections.for | default "5m" }}
+          labels:
+            severity: warning
+            service: redis
+          annotations:
+            summary: "Redis has high number of connections"
+            description: "Redis has {{ "{{ $value }}" }} connected clients on instance {{ "{{ $labels.instance }}" }}, which is above the threshold of {{ .Values.monitoring.prometheusRule.alerts.redis.connections.threshold | default 1000 }}."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/redis-high-connections"
+
+    - name: infrastructure.rules
+      interval: {{ .Values.monitoring.prometheusRule.interval | default "30s" }}
+      rules:
+        # Node Recording Rules
+        - record: node:cpu_usage:rate5m
+          expr: 100 - (avg by (instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)
+          labels:
+            service: node-exporter
+
+        - record: node:memory_usage:ratio
+          expr: (node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes
+          labels:
+            service: node-exporter
+
+        - record: node:disk_usage:ratio
+          expr: (node_filesystem_size_bytes - node_filesystem_avail_bytes) / node_filesystem_size_bytes
+          labels:
+            service: node-exporter
+
+        # Infrastructure Alert Rules
+        - alert: NodeDown
+          expr: up{job="node-exporter"} == 0
+          for: {{ .Values.monitoring.prometheusRule.alerts.node.down.for | default "1m" }}
+          labels:
+            severity: critical
+            service: node-exporter
+          annotations:
+            summary: "Node is down"
+            description: "Node {{ "{{ $labels.instance }}" }} has been down for more than 1 minute."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/node-down"
+
+        - alert: NodeHighCPU
+          expr: node:cpu_usage:rate5m > {{ .Values.monitoring.prometheusRule.alerts.node.cpu.threshold | default 80 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.node.cpu.for | default "5m" }}
+          labels:
+            severity: warning
+            service: node-exporter
+          annotations:
+            summary: "Node CPU usage is high"
+            description: "Node CPU usage is {{ "{{ printf \"%.2f\" $value }}" }}% on {{ "{{ $labels.instance }}" }}, which is above the threshold of {{ .Values.monitoring.prometheusRule.alerts.node.cpu.threshold | default 80 }}%."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/node-high-cpu"
+
+        - alert: NodeHighMemory
+          expr: node:memory_usage:ratio > {{ .Values.monitoring.prometheusRule.alerts.node.memory.threshold | default 0.9 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.node.memory.for | default "5m" }}
+          labels:
+            severity: warning
+            service: node-exporter
+          annotations:
+            summary: "Node memory usage is high"
+            description: "Node memory usage is {{ "{{ printf \"%.2f\" $value }}" }}% on {{ "{{ $labels.instance }}" }}, which is above the threshold of {{ .Values.monitoring.prometheusRule.alerts.node.memory.threshold | default 0.9 }}%."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/node-high-memory"
+
+        - alert: NodeHighDiskUsage
+          expr: node:disk_usage:ratio > {{ .Values.monitoring.prometheusRule.alerts.node.disk.threshold | default 0.9 }}
+          for: {{ .Values.monitoring.prometheusRule.alerts.node.disk.for | default "5m" }}
+          labels:
+            severity: warning
+            service: node-exporter
+          annotations:
+            summary: "Node disk usage is high"
+            description: "Node disk usage is {{ "{{ printf \"%.2f\" $value }}" }}% on {{ "{{ $labels.instance }}" }} ({{ "{{ $labels.device }}" }}), which is above the threshold of {{ .Values.monitoring.prometheusRule.alerts.node.disk.threshold | default 0.9 }}%."
+            runbook_url: "{{ .Values.monitoring.prometheusRule.runbookUrl }}/node-high-disk"
+
+    {{- with .Values.monitoring.prometheusRule.additionalGroups }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

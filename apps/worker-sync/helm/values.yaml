@@ -1,4 +1,11 @@
 # Default values for worker-sync
+
+# Global configuration
+global:
+  clusterName: "worker-sync"
+  environment: "production"
+  region: "us-east-1"
+
 replicaCount: 3
 
 image:
@@ -115,6 +122,10 @@ postgresql:
   poolSize: 20
   connectionTimeout: 30000
   idleTimeout: 10000
+  metrics:
+    enabled: true
+    targets:
+      - "postgres-exporter:9187"
 
 mysql:
   enabled: true
@@ -126,6 +137,10 @@ mysql:
   poolSize: 20
   connectionTimeout: 30000
   acquireTimeout: 60000
+  metrics:
+    enabled: true
+    targets:
+      - "mysqld-exporter:9104"
 
 mongodb:
   enabled: true
@@ -136,18 +151,188 @@ mongodb:
   ssl: true
   poolSize: 20
   serverSelectionTimeout: 30000
+  metrics:
+    enabled: true
+    targets:
+      - "mongodb-exporter:9216"
 
 # Redis configuration
 redis:
   enabled: true
-  host: redis
+  host: redis-cluster
   port: 6379
   database: 0
+  replicas: 6
+  ssl:
+    enabled: false
+  poolSize: 10
   keyPrefix: "worker-sync:"
   maxRetriesPerRequest: 3
   retryDelayOnFailover: 100
   enableReadyCheck: true
-  maxRetriesPerRequest: 3
+  maxMemory: "1gb"
+  maxMemoryPolicy: "allkeys-lru"
+  logLevel: "notice"
+  tcpKeepalive: 300
+  timeout: 0
+  tcpBacklog: 511
+  databases: 16
+  
+  # Image configuration
+  image:
+    repository: redis
+    tag: "7.2.5"
+    pullPolicy: IfNotPresent
+  
+  # Authentication
+  auth:
+    enabled: true
+  
+  # Cluster configuration
+  cluster:
+    enabled: true
+    nodeTimeout: 15000
+    replicas: 1
+    init:
+      backoffLimit: 10
+      activeDeadlineSeconds: 600
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+  
+  # Persistence configuration
+  persistence:
+    enabled: true
+    size: 8Gi
+    storageClass: ""
+    accessModes:
+      - ReadWriteOnce
+    save: "900 1 300 10 60 10000"
+    labels: {}
+    annotations: {}
+    selector: {}
+    aof:
+      enabled: true
+      fsync: "everysec"
+      noAppendfsyncOnRewrite: "no"
+      autoAofRewritePercentage: 100
+      autoAofRewriteMinSize: "64mb"
+  
+  # Service configuration
+  service:
+    type: ClusterIP
+    port: 6379
+    annotations: {}
+    extraPorts: []
+    sessionAffinity: ""
+    sessionAffinityConfig: {}
+    headless:
+      annotations: {}
+  
+  # Metrics configuration
+  metrics:
+    enabled: true
+    port: 9121
+    path: /metrics
+    logFormat: "txt"
+    extraArgs: []
+    image:
+      repository: oliver006/redis_exporter
+      tag: "v1.62.0"
+      pullPolicy: IfNotPresent
+    service:
+      port: 9121
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    livenessProbe:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+    configReloader:
+      enabled: true
+      image:
+        repository: jimmidyson/configmap-reload
+        tag: "v0.8.0"
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+           cpu: 50m
+           memory: 32Mi
+  
+  # Probes configuration
+  livenessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+  
+  readinessProbe:
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  
+  # Resources
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  
+  # Slowlog configuration
+  slowlog:
+    logSlowerThan: 10000
+    maxLen: 128
+  
+  # Client output buffer limits
+  clientOutputBufferLimit:
+    normal: "0 0 0"
+    replica: "256mb 64mb 60"
+    pubsub: "32mb 8mb 60"
+  
+  # Extra configuration
+  extraConfig: {}
+  
+  # Node selection
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+  priorityClassName: ""
+  
+  # Pod disruption budget
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+    labels: {}
+    annotations: {}
+  
+  # Update strategy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  
+  podManagementPolicy: Parallel
 
 # Kafka configuration
 kafka:
@@ -163,6 +348,10 @@ kafka:
     postgresql: dbz.public
     mysql: dbz.sync_db
     mongodb: dbz.sync_db
+  metrics:
+    enabled: true
+    targets:
+      - "kafka-exporter:9308"
 
 # RabbitMQ configuration
 rabbitmq:
@@ -173,6 +362,10 @@ rabbitmq:
   vhost: /
   heartbeat: 60
   connectionTimeout: 30000
+  metrics:
+    enabled: true
+    targets:
+      - "rabbitmq-exporter:9419"
 
 # Queue configuration
 queues:
@@ -245,6 +438,274 @@ monitoring:
     enabled: true
     port: 3003
     path: /metrics
+    image:
+      repository: prom/prometheus
+      tag: "v2.45.0"
+      pullPolicy: IfNotPresent
+    rbac:
+      create: true
+      serviceAccount:
+        create: true
+        name: ""
+        labels: {}
+        annotations: {}
+        automountServiceAccountToken: true
+    retention:
+      time: "15d"
+      size: "10GB"
+    livenessProbe:
+      httpGet:
+        path: /-/healthy
+        port: 9090
+      initialDelaySeconds: 30
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readinessProbe:
+      httpGet:
+        path: /-/ready
+        port: 9090
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+    configReloader:
+      enabled: true
+      image:
+        repository: jimmidyson/configmap-reload
+        tag: "v0.8.0"
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          cpu: 50m
+          memory: 32Mi
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessMode: ReadWriteOnce
+      size: 50Gi
+      annotations: {}
+      mountPath: /prometheus
+      subPath: ""
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        partition: 0
+    scrapeInterval: "15s"
+    evaluationInterval: "15s"
+    externalLabels:
+      cluster: "worker-sync"
+      environment: "production"
+      region: "us-east-1"
+    alertmanager:
+      targets:
+        - "alertmanager:9093"
+      pathPrefix: ""
+      scheme: "http"
+      timeout: "10s"
+    scrapeConfigs:
+      workerSync:
+        interval: "10s"
+        path: "/metrics"
+        params: {}
+      redis:
+        interval: "15s"
+        path: "/metrics"
+      nodeExporter:
+        interval: "30s"
+        path: "/metrics"
+      kafka:
+        interval: "30s"
+        path: "/metrics"
+      postgresql:
+        interval: "30s"
+        path: "/metrics"
+      mysql:
+        interval: "30s"
+        path: "/metrics"
+      mongodb:
+        interval: "30s"
+        path: "/metrics"
+      rabbitmq:
+        interval: "30s"
+        path: "/metrics"
+    recordingRules:
+      interval: "30s"
+    alerts:
+      errorRateThreshold: 0.01
+      syncLagThreshold: 500
+      queueDepthThreshold: 1000
+      cpuThreshold: 0.8
+      memoryThreshold: 0.8
+    service:
+      type: ClusterIP
+      port: 9090
+      targetPort: 9090
+      annotations: {}
+      labels: {}
+    headlessService:
+      annotations: {}
+      ipFamilyPolicy: ""
+      ipFamilies: []
+      extraPorts: []
+  grafana:
+      enabled: true
+      port: 3000
+      ldap:
+        enabled: false
+        configFile: ""
+        allowSignUp: true
+        bindPassword: ""
+      oauth:
+        enabled: false
+        clientSecret: ""
+      image:
+        repository: grafana/grafana
+        tag: "10.0.0"
+        pullPolicy: IfNotPresent
+      persistence:
+        enabled: true
+        storageClass: ""
+        accessMode: ReadWriteOnce
+        size: 10Gi
+      datasources:
+        prometheus:
+          url: http://prometheus:9090
+          type: prometheus
+          access: proxy
+          isDefault: true
+          basicAuth:
+            enabled: false
+            user: ""
+            password: ""
+        jaeger:
+          enabled: false
+          url: http://jaeger:16686
+          type: jaeger
+          access: proxy
+        loki:
+          enabled: false
+          url: http://loki:3100
+          type: loki
+          access: proxy
+      dashboards:
+        enabled: true
+        configMapName: grafana-dashboards
+      analytics:
+        checkForUpdates: false
+        reportingEnabled: false
+      auth:
+         disableLoginForm: false
+         disableSignoutMenu: false
+         anonymous:
+           enabled: false
+           orgName: "Main Org."
+           orgRole: "Viewer"
+         basic:
+           enabled: true
+         ldap:
+           enabled: false
+           configFile: ""
+           allowSignUp: true
+      database:
+        enabled: false
+        type: sqlite3
+        host: ""
+        name: grafana
+        user: ""
+        password: ""
+        path: /var/lib/grafana/grafana.db
+      log:
+        mode: console
+        level: info
+      paths:
+        data: /var/lib/grafana
+        logs: /var/log/grafana
+        plugins: /var/lib/grafana/plugins
+        provisioning: /etc/grafana/provisioning
+      security:
+         adminUser: admin
+         adminPassword: admin
+         secretKey: SW2YcwTIb9zpOOhoPsMm
+         disableGravatar: false
+      server:
+        httpAddr: ""
+        httpPort: 3000
+        domain: localhost
+        rootUrl: "%(protocol)s://%(domain)s:%(http_port)s/"
+        serveFromSubPath: false
+      smtp:
+        enabled: false
+        host: localhost:587
+        user: ""
+        password: ""
+        fromAddress: admin@grafana.localhost
+        fromName: Grafana
+      users:
+        allowSignUp: false
+        allowOrgCreate: false
+        autoAssignOrg: true
+        autoAssignOrgId: 1
+        autoAssignOrgRole: Viewer
+        verifyEmailEnabled: false
+        loginHint: "email or username"
+        passwordHint: "password"
+      notifiers:
+        slack:
+          enabled: false
+          url: ""
+          channel: "#alerts"
+          username: "Grafana"
+          title: "Grafana Alert"
+          iconEmoji: ":exclamation:"
+        email:
+          enabled: false
+          addresses: []
+          subject: "Grafana Alert"
+        webhook:
+          enabled: false
+          url: ""
+          httpMethod: "POST"
+      sidecar:
+        enabled: true
+        image:
+          repository: quay.io/kiwigrid/k8s-sidecar
+          tag: "1.24.6"
+          pullPolicy: IfNotPresent
+        dashboards:
+          enabled: true
+          label: grafana_dashboard
+          labelValue: "1"
+          folder: /tmp/dashboards
+          searchNamespace: ALL
+        datasources:
+          enabled: true
+          label: grafana_datasource
+          labelValue: "1"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+      service:
+        type: ClusterIP
+        port: 3000
+        targetPort: 3000
+        annotations: {}
+        labels: {}
+        headless:
+          enabled: false
+          annotations: {}
+          labels: {}
+      extraSecretData: {}
+  nodeExporter:
+    enabled: true
+    port: 9100
   healthCheck:
     enabled: true
     port: 3001
@@ -254,6 +715,110 @@ monitoring:
     format: json
     enableConsole: true
     enableFile: false
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    annotations: {}
+  redis:
+    enabled: true
+    port: 9121
+    image:
+      repository: oliver006/redis_exporter
+      tag: "v1.55.0"
+      pullPolicy: IfNotPresent
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+  alertmanager:
+    enabled: true
+    port: 9093
+    image:
+      repository: prom/alertmanager
+      tag: "v0.26.0"
+      pullPolicy: IfNotPresent
+    persistence:
+      enabled: true
+      storageClass: ""
+      accessMode: ReadWriteOnce
+      size: 2Gi
+    config:
+      global:
+        smtpSmarthost: 'localhost:587'
+        smtpFrom: 'alertmanager@example.org'
+      route:
+        groupBy: ['alertname']
+        groupWait: 10s
+        groupInterval: 10s
+        repeatInterval: 1h
+        receiver: 'web.hook'
+      receivers:
+        - name: 'web.hook'
+          webhookConfigs:
+            - url: 'http://127.0.0.1:5001/'
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+    service:
+      type: ClusterIP
+      port: 9093
+      targetPort: 9093
+      annotations: {}
+      labels: {}
+    clustering:
+      enabled: false
+      port: 9094
+      peers: []
+    secrets:
+      smtpAuthPassword: ""
+      slackApiUrl: ""
+      pagerdutyRoutingKey: ""
+      webhookUrl: ""
+      opsgenieApiKey: ""
+      victoropsApiKey: ""
+      victoropsRoutingKey: ""
+      telegramBotToken: ""
+      telegramChatId: ""
+      discordWebhookUrl: ""
+      msteamsWebhookUrl: ""
+      custom: {}
+
+# RBAC settings
+rbac:
+  create: true
+  serviceAccount:
+    create: true
+    name: ""
+    labels: {}
+    annotations: {}
+    automountServiceAccountToken: true
+  clusterRole:
+    create: true
+    labels: {}
+    annotations: {}
+    rules: []
+  clusterRoleBinding:
+    create: true
+    labels: {}
+    annotations: {}
+  role:
+    create: true
+    labels: {}
+    annotations: {}
+    rules: []
+  roleBinding:
+    create: true
+    labels: {}
+    annotations: {}
 
 # Circuit breaker settings
 circuitBreaker:
@@ -273,20 +838,20 @@ performance:
 # Secrets (to be overridden in production)
 secrets:
   postgresql:
-    password: ""
+    password: "changeme-postgresql"
   mysql:
-    password: ""
+    password: "changeme-mysql"
   mongodb:
-    password: ""
+    password: "changeme-mongodb"
   redis:
-    password: ""
+    password: "changeme-redis"
   rabbitmq:
-    password: ""
+    password: "changeme-rabbitmq"
   jwt:
-    privateKey: ""
-    publicKey: ""
+    privateKey: "changeme-jwt-private-key"
+    publicKey: "changeme-jwt-public-key"
   encryption:
-    key: ""
+    key: "changeme-encryption-key"
 
 # Pod Disruption Budget
 podDisruptionBudget:
@@ -320,14 +885,6 @@ networkPolicy:
       - namespaceSelector:
           matchLabels:
             name: messaging
-
-# Service Monitor for Prometheus
-serviceMonitor:
-  enabled: true
-  interval: 30s
-  scrapeTimeout: 10s
-  labels: {}
-  annotations: {}
 
 # Grafana Dashboard
 grafanaDashboard:

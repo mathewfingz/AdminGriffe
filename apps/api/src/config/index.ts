@@ -24,6 +24,16 @@ const configSchema = z.object({
   
   // CORS
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
+  
+  // Firebase
+  FIREBASE_API_KEY: z.string().optional(),
+  FIREBASE_AUTH_DOMAIN: z.string().optional(),
+  FIREBASE_PROJECT_ID: z.string().optional(),
+  FIREBASE_STORAGE_BUCKET: z.string().optional(),
+  FIREBASE_MESSAGING_SENDER_ID: z.string().optional(),
+  FIREBASE_APP_ID: z.string().optional(),
+  FIREBASE_MEASUREMENT_ID: z.string().optional(),
+  FIREBASE_SERVICE_ACCOUNT_KEY: z.string().optional(),
 });
 
 function loadConfig() {

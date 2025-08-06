@@ -1,0 +1,425 @@
+# Development values for worker-sync
+# This is a YAML-formatted file optimized for development environments
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: "standard"
+
+# Application configuration
+replicaCount: 1
+maxReplicas: 3
+minReplicas: 1
+
+image:
+  repository: worker-sync
+  pullPolicy: Always
+  tag: "latest"
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Service account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod annotations and labels
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "3001"
+  prometheus.io/path: "/metrics"
+
+podLabels:
+  version: "latest"
+  tier: "backend"
+  environment: "development"
+
+# Security context (relaxed for development)
+podSecurityContext:
+  enabled: false
+
+securityContext:
+  enabled: false
+
+# Service configuration
+service:
+  type: NodePort
+  port: 3000
+  targetPort: http
+  metricsPort: 3001
+  nodePort: 30000
+  annotations: {}
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+  hosts:
+    - host: worker-sync.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Resource limits and requests (minimal for development)
+resources:
+  limits:
+    cpu: 500m
+    memory: 1Gi
+  requests:
+    cpu: 100m
+    memory: 256Mi
+
+# Auto-scaling configuration (disabled for development)
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Node selection (none for development)
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Environment variables
+env:
+  NODE_ENV: "development"
+  LOG_LEVEL: "debug"
+  METRICS_ENABLED: "true"
+  HEALTH_CHECK_ENABLED: "true"
+  GRACEFUL_SHUTDOWN_TIMEOUT: "10000"
+  MAX_CONNECTIONS: "100"
+  POOL_SIZE: "5"
+
+# Configuration
+config:
+  logLevel: "debug"
+  metricsEnabled: true
+  healthCheckEnabled: true
+  gracefulShutdownTimeout: 10000
+  
+  # Sync configuration
+  sync:
+    batchSize: 100
+    maxRetries: 3
+    retryDelay: 500
+    conflictResolution: "timestamp"
+    enableDeduplication: false
+    
+  # Queue configuration
+  queue:
+    concurrency: 2
+    maxJobs: 1000
+    retentionDays: 1
+    
+  # Cache configuration
+  cache:
+    ttl: 300
+    maxSize: 1000
+
+# Database configurations (using local instances)
+databases:
+  postgresql:
+    enabled: true
+    host: "localhost"
+    port: 5432
+    database: "audit_db_dev"
+    username: "postgres"
+    ssl: false
+    poolSize: 5
+    connectionTimeout: 10000
+    idleTimeout: 60000
+    
+  mysql:
+    enabled: true
+    host: "localhost"
+    port: 3306
+    database: "audit_db_dev"
+    username: "root"
+    ssl: false
+    poolSize: 5
+    connectionTimeout: 10000
+    
+  mongodb:
+    enabled: true
+    host: "localhost"
+    port: 27017
+    database: "audit_db_dev"
+    username: "admin"
+    ssl: false
+    poolSize: 5
+    authSource: "admin"
+
+# Redis configuration
+redis:
+  enabled: true
+  host: "localhost"
+  port: 6379
+  database: 0
+  ssl: false
+  poolSize: 5
+  keyPrefix: "worker-sync:dev:"
+  
+# Kafka configuration
+kafka:
+  enabled: true
+  brokers:
+    - "localhost:9092"
+  ssl: false
+  sasl: false
+  clientId: "worker-sync-dev"
+  groupId: "worker-sync-dev-group"
+  
+# RabbitMQ configuration
+rabbitmq:
+  enabled: true
+  host: "localhost"
+  port: 5672
+  username: "guest"
+  ssl: false
+  vhost: "/"
+
+# Secrets configuration
+secrets:
+  create: true
+  annotations: {}
+  data:
+    POSTGRESQL_PASSWORD: "postgres"
+    MYSQL_PASSWORD: "root"
+    MONGODB_PASSWORD: "admin"
+    REDIS_PASSWORD: ""
+    KAFKA_PASSWORD: ""
+    RABBITMQ_PASSWORD: "guest"
+
+# Monitoring configuration (simplified for development)
+monitoring:
+  enabled: true
+  
+  # Prometheus configuration
+  prometheus:
+    enabled: true
+    namespace: "default"
+    persistence:
+      enabled: false
+    retention: "7d"
+    resources:
+      limits:
+        cpu: 200m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+    
+  # Grafana configuration
+  grafana:
+    enabled: true
+    namespace: "default"
+    adminPassword: "admin"
+    persistence:
+      enabled: false
+    resources:
+      limits:
+        cpu: 200m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+    
+  # AlertManager configuration
+  alertmanager:
+    enabled: false
+
+# ServiceMonitor configuration
+serviceMonitor:
+  enabled: true
+  namespace: "default"
+  interval: "60s"
+  scrapeTimeout: "30s"
+  path: "/metrics"
+  labels:
+    release: prometheus
+
+# PrometheusRule configuration
+prometheusRule:
+  enabled: true
+  namespace: "default"
+  labels:
+    release: prometheus
+  
+  # Alert thresholds (relaxed for development)
+  alerts:
+    syncLagThreshold: 2000
+    errorRateThreshold: 0.1
+    queueDepthThreshold: 500
+    conflictRateThreshold: 0.2
+    cpuThreshold: 90
+    memoryThreshold: 90
+    diskThreshold: 95
+
+# Network policies (disabled for development)
+networkPolicy:
+  enabled: false
+
+# Pod Disruption Budget (disabled for development)
+podDisruptionBudget:
+  enabled: false
+
+# RBAC (minimal for development)
+rbac:
+  create: true
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "services", "endpoints"]
+      verbs: ["get", "list", "watch"]
+
+# Jobs configuration
+jobs:
+  initJob:
+    enabled: true
+    image:
+      repository: worker-sync
+      tag: "latest"
+    resources:
+      limits:
+        cpu: 200m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+    backoffLimit: 2
+    activeDeadlineSeconds: 300
+    ttlSecondsAfterFinished: 3600
+    
+  migrationJob:
+    enabled: true
+    image:
+      repository: worker-sync
+      tag: "latest"
+    resources:
+      limits:
+        cpu: 200m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+    backoffLimit: 2
+    activeDeadlineSeconds: 600
+    ttlSecondsAfterFinished: 3600
+
+# CronJobs configuration (minimal for development)
+cronJobs:
+  auditCleanup:
+    enabled: true
+    schedule: "0 6 * * *"  # Daily at 6 AM
+    retentionDays: 7
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 1
+    failedJobsHistoryLimit: 1
+    activeDeadlineSeconds: 600
+    backoffLimit: 1
+    ttlSecondsAfterFinished: 3600
+    resources:
+      limits:
+        cpu: 100m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi
+        
+  metricsCleanup:
+    enabled: true
+    schedule: "0 7 * * *"  # Daily at 7 AM
+    retentionDays: 3
+    concurrencyPolicy: Forbid
+    successfulJobsHistoryLimit: 1
+    failedJobsHistoryLimit: 1
+    activeDeadlineSeconds: 300
+    backoffLimit: 1
+    ttlSecondsAfterFinished: 3600
+    resources:
+      limits:
+        cpu: 100m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 128Mi
+        
+  healthCheck:
+    enabled: false  # Disabled for development
+        
+  backup:
+    enabled: false  # Disabled for development
+
+# Persistence configuration (disabled for development)
+persistence:
+  enabled: false
+
+# Probes configuration (relaxed for development)
+livenessProbe:
+  enabled: true
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 60
+  timeoutSeconds: 10
+  failureThreshold: 5
+  successThreshold: 1
+
+readinessProbe:
+  enabled: true
+  httpGet:
+    path: /ready
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 5
+  successThreshold: 1
+
+startupProbe:
+  enabled: true
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 10
+  successThreshold: 1
+
+# Volume mounts (minimal for development)
+volumeMounts:
+  - name: tmp
+    mountPath: /tmp
+
+volumes:
+  - name: tmp
+    emptyDir: {}
+
+# Pod priority (none for development)
+priorityClassName: ""
+
+# Termination grace period
+terminationGracePeriodSeconds: 30
+
+# DNS configuration
+dnsPolicy: ClusterFirst
+
+# Additional labels
+additionalLabels:
+  environment: "development"
+  team: "platform"
+
+# Additional annotations
+additionalAnnotations:
+  deployment.kubernetes.io/revision: "1"
